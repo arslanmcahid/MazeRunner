@@ -102,7 +102,89 @@ class Maze {
         this.height = height;
         this.grid = this.generateMaze();
         this.position = { x: 1, y: 1 };
-        this.direction = 0; // 0: sağ, 1: aşağı, 2: sol, 3: yukarı
+        this.rotation = { x: 0, y: 0, z: 0 }; // Top için dönüş açıları
+        this.camera = {
+            distance: 5,
+            height: 3,
+            angle: 0
+        };
+        this.rotationSpeed = Math.PI;
+        this.lastTime = performance.now();
+        this.moveSpeed = 0.1;
+        this.currentMove = null;
+    }
+
+    // Hareket başlatma
+    startMove(dx, dy) {
+        if (this.currentMove) return;
+        
+        // Hedef pozisyonu hesapla
+        const targetX = Math.floor(this.position.x) + dx;
+        const targetY = Math.floor(this.position.y) + dy;
+        
+        // Sınırları ve duvarları kontrol et
+        if (targetX < 0 || targetX >= this.width || 
+            targetY < 0 || targetY >= this.height ||
+            this.grid[targetY][targetX] === 1) {
+            return; // Geçersiz hareket
+        }
+        
+        // Yeni hareket başlat
+        this.currentMove = {
+            startX: this.position.x,
+            startY: this.position.y,
+            targetX: targetX,
+            targetY: targetY,
+            progress: 0,
+            dx: dx,
+            dy: dy
+        };
+    }
+
+    // Hareketi güncelle
+    updateMovement() {
+        if (!this.currentMove) return;
+        
+        // Hareket ilerlemesini güncelle
+        this.currentMove.progress += this.moveSpeed;
+        
+        if (this.currentMove.progress >= 1) {
+            // Hareket tamamlandı
+            this.position.x = this.currentMove.targetX;
+            this.position.y = this.currentMove.targetY;
+            this.currentMove = null;
+        } else {
+            // Ara pozisyonu hesapla
+            this.position.x = this.currentMove.startX + (this.currentMove.targetX - this.currentMove.startX) * this.currentMove.progress;
+            this.position.y = this.currentMove.startY + (this.currentMove.targetY - this.currentMove.startY) * this.currentMove.progress;
+        }
+    }
+
+    updateRotation() {
+        const currentTime = performance.now();
+        const deltaTime = (currentTime - this.lastTime) / 1000;
+        this.lastTime = currentTime;
+
+        if (this.currentMove) {
+            // Hareket yönüne göre dönüş
+            const dx = this.currentMove.dx;
+            const dy = this.currentMove.dy;
+
+            // Hareket yönüne göre dönüş açılarını güncelle
+            if (dx !== 0) {
+                this.rotation.z += -dx * this.rotationSpeed * deltaTime;
+            }
+            if (dy !== 0) {
+                this.rotation.x += dy * this.rotationSpeed * deltaTime;
+            }
+
+            // Açıları normalize et
+            this.rotation.x = this.rotation.x % (Math.PI * 2);
+            this.rotation.z = this.rotation.z % (Math.PI * 2);
+        }
+
+        // Hareketi güncelle
+        this.updateMovement();
     }
 
     generateMaze() {
@@ -132,34 +214,6 @@ class Maze {
         
         carve(1, 1);
         return grid;
-    }
-
-    moveForward() {
-        const dx = [1, 0, -1, 0][this.direction];
-        const dy = [0, 1, 0, -1][this.direction];
-        
-        if (this.grid[this.position.y + dy][this.position.x + dx] === 0) {
-            this.position.x += dx;
-            this.position.y += dy;
-        }
-    }
-
-    moveBackward() {
-        const dx = [-1, 0, 1, 0][this.direction];
-        const dy = [0, -1, 0, 1][this.direction];
-        
-        if (this.grid[this.position.y + dy][this.position.x + dx] === 0) {
-            this.position.x += dx;
-            this.position.y += dy;
-        }
-    }
-
-    turnLeft() {
-        this.direction = (this.direction + 3) % 4;
-    }
-
-    turnRight() {
-        this.direction = (this.direction + 1) % 4;
     }
 }
 
@@ -263,6 +317,10 @@ class Renderer {
         image.onload = function() {
             gl.bindTexture(gl.TEXTURE_2D, texture);
             gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, image);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT);
             gl.generateMipmap(gl.TEXTURE_2D);
         };
         image.src = url;
@@ -352,67 +410,95 @@ class Renderer {
         uvs.push(0,0, 1,0, 1,1, 0,0, 1,1, 0,1);
         for (let i = 0; i < 6; i++) colors.push(1,1,1,1);
         this.floorVertexCount = 6;
-        // --- TOPU 3B SİLİNDİR OLARAK EKLE ---
+        // --- TOPU KÜRE OLARAK EKLE ---
         const player = this.maze.position;
         const px = player.x + offsetX + 0.5;
         const py = player.y + offsetY + 0.5;
         const pz = 0.5;
         const radius = 0.3;
-        const height = 0.5;
-        const numSegments = 32;
+        const latitudeBands = 30;
+        const longitudeBands = 30;
         const startIdx = vertices.length / 3;
-        // Yan yüzler
-        for (let i = 0; i < numSegments; i++) {
-            const angle1 = (i / numSegments) * Math.PI * 2;
-            const angle2 = ((i + 1) / numSegments) * Math.PI * 2;
-            const x1 = px + Math.cos(angle1) * radius;
-            const y1 = py + Math.sin(angle1) * radius;
-            const x2 = px + Math.cos(angle2) * radius;
-            const y2 = py + Math.sin(angle2) * radius;
-            vertices.push(x1, y1, pz - height / 2, x2, y2, pz - height / 2, x2, y2, pz + height / 2);
-            vertices.push(x1, y1, pz - height / 2, x2, y2, pz + height / 2, x1, y1, pz + height / 2);
-            for (let j = 0; j < 6; j++) {
-                const nx = Math.cos((angle1 + angle2) / 2);
-                const ny = Math.sin((angle1 + angle2) / 2);
-                normals.push(nx, ny, 0);
+
+        // Küre için vertex'leri oluştur
+        for (let latNumber = 0; latNumber <= latitudeBands; latNumber++) {
+            const theta = latNumber * Math.PI / latitudeBands;
+            const sinTheta = Math.sin(theta);
+            const cosTheta = Math.cos(theta);
+
+            for (let longNumber = 0; longNumber <= longitudeBands; longNumber++) {
+                const phi = longNumber * 2 * Math.PI / longitudeBands;
+                const sinPhi = Math.sin(phi);
+                const cosPhi = Math.cos(phi);
+
+                const x = px + radius * cosPhi * sinTheta;
+                const y = py + radius * sinPhi * sinTheta;
+                const z = pz + radius * cosTheta;
+
+                // Normal vektörler (birim küre için pozisyon - merkez = normal)
+                const nx = cosPhi * sinTheta;
+                const ny = sinPhi * sinTheta;
+                const nz = cosTheta;
+
+                // Texture koordinatları
+                const u = 1 - (longNumber / longitudeBands);
+                const v = 1 - (latNumber / latitudeBands);
+
+                vertices.push(x, y, z);
+                normals.push(nx, ny, nz);
                 colors.push(1.0, 0.0, 0.0, 1.0);
-                // Silindir için UV (yanal):
-                uvs.push(i/numSegments,0, (i+1)/numSegments,0, (i+1)/numSegments,1);
-                uvs.push(i/numSegments,0, (i+1)/numSegments,1, i/numSegments,1);
+                uvs.push(u, v);
             }
         }
-        // Üst kapak
-        for (let i = 0; i < numSegments; i++) {
-            const angle1 = (i / numSegments) * Math.PI * 2;
-            const angle2 = ((i + 1) / numSegments) * Math.PI * 2;
-            const x1 = px + Math.cos(angle1) * radius;
-            const y1 = py + Math.sin(angle1) * radius;
-            const x2 = px + Math.cos(angle2) * radius;
-            const y2 = py + Math.sin(angle2) * radius;
-            vertices.push(px, py, pz + height / 2, x1, y1, pz + height / 2, x2, y2, pz + height / 2);
-            for (let j = 0; j < 3; j++) {
-                normals.push(0, 0, 1);
-                colors.push(1.0, 0.0, 0.0, 1.0);
-                uvs.push(0.5,0.5, 0.5+0.5*Math.cos(angle1),0.5+0.5*Math.sin(angle1), 0.5+0.5*Math.cos(angle2),0.5+0.5*Math.sin(angle2));
+
+        // Üçgenleri oluştur
+        for (let latNumber = 0; latNumber < latitudeBands; latNumber++) {
+            for (let longNumber = 0; longNumber < longitudeBands; longNumber++) {
+                const first = (latNumber * (longitudeBands + 1)) + longNumber + startIdx;
+                const second = first + longitudeBands + 1;
+
+                // İlk üçgen
+                vertices.push(
+                    vertices[first * 3], vertices[first * 3 + 1], vertices[first * 3 + 2],
+                    vertices[(first + 1) * 3], vertices[(first + 1) * 3 + 1], vertices[(first + 1) * 3 + 2],
+                    vertices[second * 3], vertices[second * 3 + 1], vertices[second * 3 + 2]
+                );
+
+                // İkinci üçgen
+                vertices.push(
+                    vertices[(first + 1) * 3], vertices[(first + 1) * 3 + 1], vertices[(first + 1) * 3 + 2],
+                    vertices[(second + 1) * 3], vertices[(second + 1) * 3 + 1], vertices[(second + 1) * 3 + 2],
+                    vertices[second * 3], vertices[second * 3 + 1], vertices[second * 3 + 2]
+                );
+
+                // Her vertex için normal, renk ve UV değerlerini ekle
+                for (let i = 0; i < 6; i++) {
+                    normals.push(
+                        normals[first * 3], normals[first * 3 + 1], normals[first * 3 + 2]
+                    );
+                    colors.push(1.0, 0.0, 0.0, 1.0);
+                }
+
+                // UV koordinatları
+                const u1 = 1 - (longNumber / longitudeBands);
+                const v1 = 1 - (latNumber / latitudeBands);
+                const u2 = 1 - ((longNumber + 1) / longitudeBands);
+                const v2 = 1 - ((latNumber + 1) / latitudeBands);
+
+                // İlk üçgen UV'leri
+                uvs.push(u1, v1);
+                uvs.push(u2, v1);
+                uvs.push(u1, v2);
+
+                // İkinci üçgen UV'leri
+                uvs.push(u2, v1);
+                uvs.push(u2, v2);
+                uvs.push(u1, v2);
             }
         }
-        // Alt kapak
-        for (let i = 0; i < numSegments; i++) {
-            const angle1 = (i / numSegments) * Math.PI * 2;
-            const angle2 = ((i + 1) / numSegments) * Math.PI * 2;
-            const x1 = px + Math.cos(angle1) * radius;
-            const y1 = py + Math.sin(angle1) * radius;
-            const x2 = px + Math.cos(angle2) * radius;
-            const y2 = py + Math.sin(angle2) * radius;
-            vertices.push(px, py, pz - height / 2, x2, y2, pz - height / 2, x1, y1, pz - height / 2);
-            for (let j = 0; j < 3; j++) {
-                normals.push(0, 0, -1);
-                colors.push(1.0, 0.0, 0.0, 1.0);
-                uvs.push(0.5,0.5, 0.5+0.5*Math.cos(angle2),0.5+0.5*Math.sin(angle2), 0.5+0.5*Math.cos(angle1),0.5+0.5*Math.sin(angle1));
-            }
-        }
+
         this.playerStartIdx = startIdx;
-        this.playerVertexCount = vertices.length / 3 - startIdx;
+        this.playerVertexCount = (vertices.length / 3) - startIdx;
         // ---
         this.vertexBuffer = this.gl.createBuffer();
         this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.vertexBuffer);
@@ -433,21 +519,37 @@ class Renderer {
         this.gl.clearColor(0.0, 0.0, 0.0, 1.0);
         this.gl.clear(this.gl.COLOR_BUFFER_BIT | this.gl.DEPTH_BUFFER_BIT);
         this.gl.useProgram(this.shaderProgram);
+
+        // Kamera pozisyonunu güncelle
         const aspect = this.gl.canvas.width / this.gl.canvas.height;
         const projectionMatrix = createPerspectiveMatrix(Math.PI / 4, aspect, 0.1, 100.0);
+        
         const offsetX = -this.maze.width / 2;
         const offsetY = -this.maze.height / 2;
         const player = this.maze.position;
         const px = player.x + offsetX + 0.5;
         const py = player.y + offsetY + 0.5;
-        const eye = [px, py, 4];
-        const center = [px, py, 0];
-        const up = [0, 1, 0];
+
+        // Kamera pozisyonunu hesapla
+        const cameraX = px + Math.cos(this.maze.camera.angle) * this.maze.camera.distance;
+        const cameraY = py + Math.sin(this.maze.camera.angle) * this.maze.camera.distance;
+        const cameraZ = this.maze.camera.height;
+
+        const eye = [cameraX, cameraY, cameraZ];
+        const center = [px, py, 0.5]; // Topun merkezi
+        const up = [0, 0, 1];
+        
         const modelViewMatrix = createLookAtMatrix(eye, center, up);
+
+        // Shader'a matrisleri gönder
         const uProjectionMatrix = this.gl.getUniformLocation(this.shaderProgram, 'uProjectionMatrix');
         const uModelViewMatrix = this.gl.getUniformLocation(this.shaderProgram, 'uModelViewMatrix');
         this.gl.uniformMatrix4fv(uProjectionMatrix, false, projectionMatrix);
         this.gl.uniformMatrix4fv(uModelViewMatrix, false, modelViewMatrix);
+
+        // Top için dönüş matrisini güncelle
+        this.maze.updateRotation();
+
         // Attribute ayarları
         const positionAttributeLocation = this.gl.getAttribLocation(this.shaderProgram, 'aVertexPosition');
         if (positionAttributeLocation === -1) {
@@ -457,6 +559,7 @@ class Renderer {
         this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.vertexBuffer);
         this.gl.vertexAttribPointer(positionAttributeLocation, 3, this.gl.FLOAT, false, 0, 0);
         this.gl.enableVertexAttribArray(positionAttributeLocation);
+
         const colorAttributeLocation = this.gl.getAttribLocation(this.shaderProgram, 'aVertexColor');
         if (colorAttributeLocation === -1) {
             console.error('aVertexColor attribute bulunamadı');
@@ -465,29 +568,78 @@ class Renderer {
         this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.colorBuffer);
         this.gl.vertexAttribPointer(colorAttributeLocation, 4, this.gl.FLOAT, false, 0, 0);
         this.gl.enableVertexAttribArray(colorAttributeLocation);
+
         const normalAttributeLocation = this.gl.getAttribLocation(this.shaderProgram, 'aVertexNormal');
         if (normalAttributeLocation !== -1) {
             this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.normalBuffer);
             this.gl.vertexAttribPointer(normalAttributeLocation, 3, this.gl.FLOAT, false, 0, 0);
             this.gl.enableVertexAttribArray(normalAttributeLocation);
         }
+
         const texCoordAttributeLocation = this.gl.getAttribLocation(this.shaderProgram, 'aTexCoord');
         if (texCoordAttributeLocation !== -1) {
             this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.uvBuffer);
             this.gl.vertexAttribPointer(texCoordAttributeLocation, 2, this.gl.FLOAT, false, 0, 0);
             this.gl.enableVertexAttribArray(texCoordAttributeLocation);
         }
+
         // --- ZEMİNİ ÇİZ ---
         this.gl.activeTexture(this.gl.TEXTURE0);
         this.gl.bindTexture(this.gl.TEXTURE_2D, this.textures.floor);
         this.gl.uniform1i(this.gl.getUniformLocation(this.shaderProgram, 'uTexture'), 0);
         this.gl.drawArrays(this.gl.TRIANGLES, this.floorStartIdx, this.floorVertexCount);
+
         // --- DUVARLARI ÇİZ ---
         this.gl.activeTexture(this.gl.TEXTURE0);
         this.gl.bindTexture(this.gl.TEXTURE_2D, this.textures.wall);
         this.gl.uniform1i(this.gl.getUniformLocation(this.shaderProgram, 'uTexture'), 0);
         this.gl.drawArrays(this.gl.TRIANGLES, 0, this.floorStartIdx);
+
         // --- TOPU ÇİZ ---
+        // Top için dönüş matrisini uygula
+        const ballModelViewMatrix = new Float32Array(16);
+        for (let i = 0; i < 16; i++) {
+            ballModelViewMatrix[i] = modelViewMatrix[i];
+        }
+        
+        // Dönüş matrislerini uygula
+        const rotateX = this.maze.rotation.x;
+        const rotateY = this.maze.rotation.y;
+        const rotateZ = this.maze.rotation.z;
+        
+        // X ekseni etrafında dönüş
+        const cosX = Math.cos(rotateX);
+        const sinX = Math.sin(rotateX);
+        const rotationX = new Float32Array([
+            1, 0, 0, 0,
+            0, cosX, -sinX, 0,
+            0, sinX, cosX, 0,
+            0, 0, 0, 1
+        ]);
+        
+        // Y ekseni etrafında dönüş
+        const cosY = Math.cos(rotateY);
+        const sinY = Math.sin(rotateY);
+        const rotationY = new Float32Array([
+            cosY, 0, sinY, 0,
+            0, 1, 0, 0,
+            -sinY, 0, cosY, 0,
+            0, 0, 0, 1
+        ]);
+        
+        // Z ekseni etrafında dönüş
+        const cosZ = Math.cos(rotateZ);
+        const sinZ = Math.sin(rotateZ);
+        const rotationZ = new Float32Array([
+            cosZ, -sinZ, 0, 0,
+            sinZ, cosZ, 0, 0,
+            0, 0, 1, 0,
+            0, 0, 0, 1
+        ]);
+
+        // Dönüş matrislerini uygula
+        this.gl.uniformMatrix4fv(uModelViewMatrix, false, ballModelViewMatrix);
+        
         this.gl.activeTexture(this.gl.TEXTURE0);
         this.gl.bindTexture(this.gl.TEXTURE_2D, this.textures.ball);
         this.gl.uniform1i(this.gl.getUniformLocation(this.shaderProgram, 'uTexture'), 0);
@@ -522,11 +674,34 @@ class Game {
     setupEventListeners() {
         document.addEventListener('keydown', (e) => {
             switch(e.key.toLowerCase()) {
-                case 'w': this.maze.moveForward(); break;
-                case 's': this.maze.moveBackward(); break;
-                case 'a': this.maze.turnLeft(); break;
-                case 'd': this.maze.turnRight(); break;
+                case 'w': 
+                case 'arrowup':
+                    // Sola hareket
+                    this.maze.startMove(-1, 0);
+                    break;
+                case 's':
+                case 'arrowdown':
+                    // Sağa hareket
+                    this.maze.startMove(1, 0);
+                    break;
+                case 'a':
+                case 'arrowleft':
+                    // Yukarı hareket
+                    this.maze.startMove(0, -1);
+                    break;
+                case 'd':
+                case 'arrowright':
+                    // Aşağı hareket
+                    this.maze.startMove(0, 1);
+                    break;
             }
+        });
+
+        // Pencere boyutu değiştiğinde canvas'ı yeniden boyutlandır
+        window.addEventListener('resize', () => {
+            this.canvas.width = window.innerWidth;
+            this.canvas.height = window.innerHeight;
+            this.gl.viewport(0, 0, this.canvas.width, this.canvas.height);
         });
     }
 
