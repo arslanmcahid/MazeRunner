@@ -167,7 +167,9 @@ class Renderer {
     constructor(gl, maze) {
         this.gl = gl;
         this.maze = maze;
+        this.textures = {};
         this.setupShaders();
+        this.loadTextures();
         this.setupBuffers();
     }
 
@@ -176,15 +178,18 @@ class Renderer {
             attribute vec3 aVertexPosition;
             attribute vec4 aVertexColor;
             attribute vec3 aVertexNormal;
+            attribute vec2 aTexCoord;
             uniform mat4 uModelViewMatrix;
             uniform mat4 uProjectionMatrix;
             varying vec4 vColor;
             varying vec3 vNormal;
             varying vec3 vPosition;
+            varying vec2 vTexCoord;
             void main(void) {
                 vColor = aVertexColor;
                 vNormal = aVertexNormal;
                 vPosition = (uModelViewMatrix * vec4(aVertexPosition, 1.0)).xyz;
+                vTexCoord = aTexCoord;
                 gl_Position = uProjectionMatrix * uModelViewMatrix * vec4(aVertexPosition, 1.0);
             }
         `;
@@ -194,18 +199,19 @@ class Renderer {
             varying vec4 vColor;
             varying vec3 vNormal;
             varying vec3 vPosition;
+            varying vec2 vTexCoord;
+            uniform sampler2D uTexture;
             void main(void) {
-                // Işık ve kamera ayarları
-                vec3 lightDir = normalize(vec3(0.0, 0.0, 1.0)); // yukarıdan
-                vec3 viewDir = normalize(-vPosition); // kameradan piksele
+                vec3 lightDir = normalize(vec3(0.0, 0.0, 1.0));
+                vec3 viewDir = normalize(-vPosition);
                 float ambient = 0.3;
                 float diff = max(dot(vNormal, lightDir), 0.0);
-                // Specular (yansıma)
                 float specularStrength = 0.7;
                 vec3 reflectDir = reflect(-lightDir, vNormal);
                 float spec = pow(max(dot(viewDir, reflectDir), 0.0), 32.0);
                 float lighting = ambient + 0.5 * diff + specularStrength * spec;
-                gl_FragColor = vec4(vColor.rgb * lighting, vColor.a);
+                vec4 texColor = texture2D(uTexture, vTexCoord);
+                gl_FragColor = vec4(vColor.rgb * texColor.rgb * lighting, vColor.a * texColor.a);
             }
         `;
 
@@ -241,10 +247,33 @@ class Renderer {
         return shader;
     }
 
+    loadTextures() {
+        this.textures.floor = this.loadTexture('assets/floor.jpg');
+        this.textures.wall = this.loadTexture('assets/wall.jpg');
+        this.textures.ball = this.loadTexture('assets/ball.jpg');
+    }
+
+    loadTexture(url) {
+        const gl = this.gl;
+        const texture = gl.createTexture();
+        gl.bindTexture(gl.TEXTURE_2D, texture);
+        // Geçici 1x1 pixel
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([128,128,128,255]));
+        const image = new Image();
+        image.onload = function() {
+            gl.bindTexture(gl.TEXTURE_2D, texture);
+            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, image);
+            gl.generateMipmap(gl.TEXTURE_2D);
+        };
+        image.src = url;
+        return texture;
+    }
+
     setupBuffers() {
         const vertices = [];
         const colors = [];
         const normals = [];
+        const uvs = [];
         const offsetX = -this.maze.width / 2;
         const offsetY = -this.maze.height / 2;
         const wallHeight = 1.0;
@@ -258,55 +287,76 @@ class Renderer {
                     const y1 = y0 + 1;
                     const z0 = 0;
                     const z1 = wallHeight;
-                    // Her yüz için 2 üçgen ve normal
+                    // Her yüz için 2 üçgen ve normal ve UV
                     // Ön yüz (z1)
                     vertices.push(
                         x0, y0, z1,  x1, y0, z1,  x1, y1, z1,
                         x0, y0, z1,  x1, y1, z1,  x0, y1, z1
                     );
                     for (let i = 0; i < 6; i++) normals.push(0, 0, 1);
+                    uvs.push(0,0, 1,0, 1,1, 0,0, 1,1, 0,1);
                     // Arka yüz (z0)
                     vertices.push(
                         x0, y1, z0,  x1, y1, z0,  x1, y0, z0,
                         x0, y1, z0,  x1, y0, z0,  x0, y0, z0
                     );
                     for (let i = 0; i < 6; i++) normals.push(0, 0, -1);
+                    uvs.push(0,1, 1,1, 1,0, 0,1, 1,0, 0,0);
                     // Sağ yüz
                     vertices.push(
                         x1, y0, z0,  x1, y1, z0,  x1, y1, z1,
                         x1, y0, z0,  x1, y1, z1,  x1, y0, z1
                     );
                     for (let i = 0; i < 6; i++) normals.push(1, 0, 0);
+                    uvs.push(0,0, 1,0, 1,1, 0,0, 1,1, 0,1);
                     // Sol yüz
                     vertices.push(
                         x0, y0, z1,  x0, y1, z1,  x0, y1, z0,
                         x0, y0, z1,  x0, y1, z0,  x0, y0, z0
                     );
                     for (let i = 0; i < 6; i++) normals.push(-1, 0, 0);
+                    uvs.push(0,1, 1,1, 1,0, 0,1, 1,0, 0,0);
                     // Üst yüz
                     vertices.push(
                         x0, y1, z1,  x1, y1, z1,  x1, y1, z0,
                         x0, y1, z1,  x1, y1, z0,  x0, y1, z0
                     );
                     for (let i = 0; i < 6; i++) normals.push(0, 1, 0);
+                    uvs.push(0,1, 1,1, 1,0, 0,1, 1,0, 0,0);
                     // Alt yüz
                     vertices.push(
                         x0, y0, z0,  x1, y0, z0,  x1, y0, z1,
                         x0, y0, z0,  x1, y0, z1,  x0, y0, z1
                     );
                     for (let i = 0; i < 6; i++) normals.push(0, -1, 0);
-                    // Renkler (her vertex için)
+                    uvs.push(0,0, 1,0, 1,1, 0,0, 1,1, 0,1);
                     for (let i = 0; i < 36; i++) {
                         colors.push(0.7, 0.7, 0.7, 1.0);
                     }
                 }
             }
         }
+        // --- ZEMİN (PLANE) ---
+        this.floorStartIdx = vertices.length / 3;
+        // Plane: (zemin maze'nin altına tam oturacak şekilde)
+        const fx0 = offsetX, fy0 = offsetY, fx1 = offsetX + this.maze.width, fy1 = offsetY + this.maze.height, fz = 0;
+        vertices.push(
+            fx0, fy0, fz,
+            fx1, fy0, fz,
+            fx1, fy1, fz,
+            fx0, fy0, fz,
+            fx1, fy1, fz,
+            fx0, fy1, fz
+        );
+        for (let i = 0; i < 6; i++) normals.push(0, 0, 1);
+        uvs.push(0,0, 1,0, 1,1, 0,0, 1,1, 0,1);
+        for (let i = 0; i < 6; i++) colors.push(1,1,1,1);
+        this.floorVertexCount = 6;
         // --- TOPU 3B SİLİNDİR OLARAK EKLE ---
         const player = this.maze.position;
         const px = player.x + offsetX + 0.5;
         const py = player.y + offsetY + 0.5;
-        const pz = 0.5; // duvar yüksekliğinin yarısı
+        const pz = 0.5;
         const radius = 0.3;
         const height = 0.5;
         const numSegments = 32;
@@ -319,15 +369,16 @@ class Renderer {
             const y1 = py + Math.sin(angle1) * radius;
             const x2 = px + Math.cos(angle2) * radius;
             const y2 = py + Math.sin(angle2) * radius;
-            // Alt üçgen
             vertices.push(x1, y1, pz - height / 2, x2, y2, pz - height / 2, x2, y2, pz + height / 2);
             vertices.push(x1, y1, pz - height / 2, x2, y2, pz + height / 2, x1, y1, pz + height / 2);
             for (let j = 0; j < 6; j++) {
-                // Yanal normal
                 const nx = Math.cos((angle1 + angle2) / 2);
                 const ny = Math.sin((angle1 + angle2) / 2);
                 normals.push(nx, ny, 0);
                 colors.push(1.0, 0.0, 0.0, 1.0);
+                // Silindir için UV (yanal):
+                uvs.push(i/numSegments,0, (i+1)/numSegments,0, (i+1)/numSegments,1);
+                uvs.push(i/numSegments,0, (i+1)/numSegments,1, i/numSegments,1);
             }
         }
         // Üst kapak
@@ -342,6 +393,7 @@ class Renderer {
             for (let j = 0; j < 3; j++) {
                 normals.push(0, 0, 1);
                 colors.push(1.0, 0.0, 0.0, 1.0);
+                uvs.push(0.5,0.5, 0.5+0.5*Math.cos(angle1),0.5+0.5*Math.sin(angle1), 0.5+0.5*Math.cos(angle2),0.5+0.5*Math.sin(angle2));
             }
         }
         // Alt kapak
@@ -356,6 +408,7 @@ class Renderer {
             for (let j = 0; j < 3; j++) {
                 normals.push(0, 0, -1);
                 colors.push(1.0, 0.0, 0.0, 1.0);
+                uvs.push(0.5,0.5, 0.5+0.5*Math.cos(angle2),0.5+0.5*Math.sin(angle2), 0.5+0.5*Math.cos(angle1),0.5+0.5*Math.sin(angle1));
             }
         }
         this.playerStartIdx = startIdx;
@@ -368,17 +421,18 @@ class Renderer {
         this.colorBuffer = this.gl.createBuffer();
         this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.colorBuffer);
         this.gl.bufferData(this.gl.ARRAY_BUFFER, new Float32Array(colors), this.gl.STATIC_DRAW);
-        // Normal buffer
         this.normalBuffer = this.gl.createBuffer();
         this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.normalBuffer);
         this.gl.bufferData(this.gl.ARRAY_BUFFER, new Float32Array(normals), this.gl.STATIC_DRAW);
+        this.uvBuffer = this.gl.createBuffer();
+        this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.uvBuffer);
+        this.gl.bufferData(this.gl.ARRAY_BUFFER, new Float32Array(uvs), this.gl.STATIC_DRAW);
     }
 
     render() {
         this.gl.clearColor(0.0, 0.0, 0.0, 1.0);
         this.gl.clear(this.gl.COLOR_BUFFER_BIT | this.gl.DEPTH_BUFFER_BIT);
         this.gl.useProgram(this.shaderProgram);
-        // Kamera ve perspektif matrisleri
         const aspect = this.gl.canvas.width / this.gl.canvas.height;
         const projectionMatrix = createPerspectiveMatrix(Math.PI / 4, aspect, 0.1, 100.0);
         const offsetX = -this.maze.width / 2;
@@ -411,23 +465,39 @@ class Renderer {
         this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.colorBuffer);
         this.gl.vertexAttribPointer(colorAttributeLocation, 4, this.gl.FLOAT, false, 0, 0);
         this.gl.enableVertexAttribArray(colorAttributeLocation);
-        // Normal attribute
         const normalAttributeLocation = this.gl.getAttribLocation(this.shaderProgram, 'aVertexNormal');
         if (normalAttributeLocation !== -1) {
             this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.normalBuffer);
             this.gl.vertexAttribPointer(normalAttributeLocation, 3, this.gl.FLOAT, false, 0, 0);
             this.gl.enableVertexAttribArray(normalAttributeLocation);
         }
-        // Duvarları çiz
-        this.gl.drawArrays(this.gl.TRIANGLES, 0, this.vertexBuffer.numItems - this.playerVertexCount);
-        // Topu çiz
+        const texCoordAttributeLocation = this.gl.getAttribLocation(this.shaderProgram, 'aTexCoord');
+        if (texCoordAttributeLocation !== -1) {
+            this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.uvBuffer);
+            this.gl.vertexAttribPointer(texCoordAttributeLocation, 2, this.gl.FLOAT, false, 0, 0);
+            this.gl.enableVertexAttribArray(texCoordAttributeLocation);
+        }
+        // --- ZEMİNİ ÇİZ ---
+        this.gl.activeTexture(this.gl.TEXTURE0);
+        this.gl.bindTexture(this.gl.TEXTURE_2D, this.textures.floor);
+        this.gl.uniform1i(this.gl.getUniformLocation(this.shaderProgram, 'uTexture'), 0);
+        this.gl.drawArrays(this.gl.TRIANGLES, this.floorStartIdx, this.floorVertexCount);
+        // --- DUVARLARI ÇİZ ---
+        this.gl.activeTexture(this.gl.TEXTURE0);
+        this.gl.bindTexture(this.gl.TEXTURE_2D, this.textures.wall);
+        this.gl.uniform1i(this.gl.getUniformLocation(this.shaderProgram, 'uTexture'), 0);
+        this.gl.drawArrays(this.gl.TRIANGLES, 0, this.floorStartIdx);
+        // --- TOPU ÇİZ ---
+        this.gl.activeTexture(this.gl.TEXTURE0);
+        this.gl.bindTexture(this.gl.TEXTURE_2D, this.textures.ball);
+        this.gl.uniform1i(this.gl.getUniformLocation(this.shaderProgram, 'uTexture'), 0);
         this.gl.drawArrays(this.gl.TRIANGLES, this.playerStartIdx, this.playerVertexCount);
     }
 }
 
 class Game {
     constructor() {
-        this.canvas = document.getElementById('glcanvas');
+        this.canvas = document.getElementById('glCanvas');
         this.canvas.width = window.innerWidth;
         this.canvas.height = window.innerHeight;
         
