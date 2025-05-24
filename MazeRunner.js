@@ -103,7 +103,9 @@ class Maze {
         this.grid = this.generateMaze();
         this.ball = {
             position: { x: 1, y: 1 },
-            rotation: { x: 0, y: 0, z: 0 }
+            rotation: { x: 0, y: 0, z: 0 },
+            radius: 0.3,  // Top yarıçapı
+            rotationSpeed: Math.PI * 2  // Tam tur dönüş hızı
         };
         this.camera = {
             position: { x: 1, y: 1 },
@@ -113,7 +115,6 @@ class Maze {
             acceleration: 0.008,
             friction: 0.95
         };
-        this.rotationSpeed = Math.PI;
         this.lastTime = performance.now();
         this.moveSpeed = 0.05;
         this.currentMove = null;
@@ -123,32 +124,30 @@ class Maze {
     }
 
     startMove(dx, dy) {
-        // Hedef pozisyonu hesapla
         const targetX = this.ball.position.x + dx;
         const targetY = this.ball.position.y + dy;
         
-        // Sınırları ve duvarları kontrol et
         const gridX = Math.floor(targetX);
         const gridY = Math.floor(targetY);
         
         if (gridX < 0 || gridX >= this.width || 
             gridY < 0 || gridY >= this.height ||
             this.grid[gridY][gridX] === 1) {
-            return; // Geçersiz hareket
+            return;
         }
         
-        // Hareket yönünü güncelle
         this.moveDirection = { x: dx, y: dy };
-        
-        // Hedef pozisyonu güncelle
         this.targetPosition.x = targetX;
         this.targetPosition.y = targetY;
         this.currentMove = { dx, dy };
     }
 
     updateMovement() {
+        const currentTime = performance.now();
+        const deltaTime = (currentTime - this.lastTime) / 1000; // Saniye cinsinden geçen süre
+        this.lastTime = currentTime;
+
         if (!this.currentMove) {
-            // Hareket yoksa sürtünme uygula
             this.camera.velocity.x *= this.camera.friction;
             this.camera.velocity.y *= this.camera.friction;
             return;
@@ -158,8 +157,29 @@ class Maze {
         const dx = this.targetPosition.x - this.ball.position.x;
         const dy = this.targetPosition.y - this.ball.position.y;
         
-        this.ball.position.x += dx * this.lerpFactor;
-        this.ball.position.y += dy * this.lerpFactor;
+        const moveX = dx * this.lerpFactor;
+        const moveY = dy * this.lerpFactor;
+
+        // Top pozisyonunu güncelle
+        this.ball.position.x += moveX;
+        this.ball.position.y += moveY;
+
+        // Topun yuvarlanma animasyonu
+        const moveDistance = Math.sqrt(moveX * moveX + moveY * moveY);
+        if (moveDistance > 0.001) {
+            // Hareket yönüne dik olan eksen etrafında dönme
+            const rotationAngle = (moveDistance / this.ball.radius) * this.ball.rotationSpeed * deltaTime;
+            
+            // Hareket yönüne göre dönme eksenlerini hesapla
+            const normalizedDx = moveX / moveDistance;
+            const normalizedDy = moveY / moveDistance;
+
+            // Y ekseni etrafında dönüş (x yönündeki hareket için)
+            this.ball.rotation.y += rotationAngle * normalizedDx;
+
+            // X ekseni etrafında dönüş (y yönündeki hareket için)
+            this.ball.rotation.x -= rotationAngle * normalizedDy;
+        }
 
         // Hareket tamamlandı mı kontrol et
         if (Math.abs(dx) < 0.01 && Math.abs(dy) < 0.01) {
@@ -175,15 +195,12 @@ class Maze {
         const distance = Math.sqrt(targetDx * targetDx + targetDy * targetDy);
 
         if (distance > 0.01) {
-            // Normalize edilmiş yön vektörü
             const dirX = targetDx / distance;
             const dirY = targetDy / distance;
 
-            // Hızı güncelle (ivmelenme)
             this.camera.velocity.x += dirX * this.camera.acceleration;
             this.camera.velocity.y += dirY * this.camera.acceleration;
 
-            // Maksimum hızı sınırla
             const currentSpeed = Math.sqrt(
                 this.camera.velocity.x * this.camera.velocity.x + 
                 this.camera.velocity.y * this.camera.velocity.y
@@ -202,33 +219,6 @@ class Maze {
         // Sürtünme uygula
         this.camera.velocity.x *= this.camera.friction;
         this.camera.velocity.y *= this.camera.friction;
-    }
-
-    updateRotation() {
-        const currentTime = performance.now();
-        const deltaTime = (currentTime - this.lastTime) / 1000;
-        this.lastTime = currentTime;
-
-        if (this.currentMove) {
-            // Top dönüşünü hareket yönüne göre güncelle
-            const dx = this.currentMove.dx;
-            const dy = this.currentMove.dy;
-
-            // X ve Z eksenleri etrafında dönüş
-            if (dx !== 0) {
-                this.ball.rotation.z += -Math.sign(dx) * this.rotationSpeed * deltaTime;
-            }
-            if (dy !== 0) {
-                this.ball.rotation.x += Math.sign(dy) * this.rotationSpeed * deltaTime;
-            }
-
-            // Açıları normalize et
-            this.ball.rotation.x = this.ball.rotation.x % (Math.PI * 2);
-            this.ball.rotation.z = this.ball.rotation.z % (Math.PI * 2);
-        }
-
-        // Hareketi güncelle
-        this.updateMovement();
     }
 
     generateMaze() {
@@ -588,7 +578,7 @@ class Renderer {
         this.gl.uniformMatrix4fv(uModelViewMatrix, false, modelViewMatrix);
 
         // Top için dönüş matrisini güncelle
-        this.maze.updateRotation();
+        this.maze.updateMovement();
 
         // Attribute ayarları
         const positionAttributeLocation = this.gl.getAttribLocation(this.shaderProgram, 'aVertexPosition');
@@ -718,6 +708,7 @@ class Game {
         
         this.setupEventListeners();
         this.createFpsDisplay();
+        this.createHowToPlayScreen();
         this.animate();
     }
 
@@ -750,11 +741,70 @@ class Game {
         this.lastFrameTime = currentTime;
     }
 
+    createHowToPlayScreen() {
+        this.howToPlayScreen = document.createElement('div');
+        this.howToPlayScreen.style.position = 'fixed';
+        this.howToPlayScreen.style.top = '50%';
+        this.howToPlayScreen.style.left = '50%';
+        this.howToPlayScreen.style.transform = 'translate(-50%, -50%)';
+        this.howToPlayScreen.style.backgroundColor = 'rgba(0, 0, 0, 0.9)';
+        this.howToPlayScreen.style.color = 'white';
+        this.howToPlayScreen.style.padding = '20px';
+        this.howToPlayScreen.style.borderRadius = '10px';
+        this.howToPlayScreen.style.fontFamily = 'Arial, sans-serif';
+        this.howToPlayScreen.style.fontSize = '16px';
+        this.howToPlayScreen.style.maxWidth = '500px';
+        this.howToPlayScreen.style.display = 'none';
+        this.howToPlayScreen.style.zIndex = '1000';
+        this.howToPlayScreen.style.boxShadow = '0 0 20px rgba(0,0,0,0.5)';
+        this.howToPlayScreen.style.border = '1px solid rgba(255,255,255,0.1)';
+
+        this.howToPlayScreen.innerHTML = `
+            <h2 style="color: #4CAF50; margin-bottom: 20px; text-align: center;">How to Play</h2>
+            <div style="line-height: 1.6;">
+                <p><strong>Movement Controls:</strong></p>
+                <ul style="list-style-type: none; padding-left: 20px;">
+                    <li>⬆️ W or Up Arrow: Move Forward</li>
+                    <li>⬇️ S or Down Arrow: Move Backward</li>
+                    <li>⬅️ A or Left Arrow: Move Left</li>
+                    <li>➡️ D or Right Arrow: Move Right</li>
+                </ul>
+                <p><strong>Additional Controls:</strong></p>
+                <ul style="list-style-type: none; padding-left: 20px;">
+                    <li>🎮 Diagonal Movement: Press two direction keys simultaneously</li>
+                    <li>ℹ️ I Key: Toggle this help screen</li>
+                </ul>
+                <p><strong>Objective:</strong></p>
+                <p style="padding-left: 20px;">Navigate through the maze and find your way to the exit. Avoid hitting the walls!</p>
+                <p style="text-align: center; margin-top: 20px; color: #888;">
+                    Press 'I' again to close this window
+                </p>
+            </div>
+        `;
+
+        document.body.appendChild(this.howToPlayScreen);
+    }
+
+    toggleHowToPlay() {
+        if (this.howToPlayScreen.style.display === 'none') {
+            this.howToPlayScreen.style.display = 'block';
+        } else {
+            this.howToPlayScreen.style.display = 'none';
+        }
+    }
+
     setupEventListeners() {
         // Tuşa basıldığında
         document.addEventListener('keydown', (e) => {
-            this.pressedKeys.add(e.key.toLowerCase());
-            this.updateMovement();
+            const key = e.key.toLowerCase();
+            this.pressedKeys.add(key);
+            
+            // I tuşuna basıldığında how to play ekranını aç/kapa
+            if (key === 'i') {
+                this.toggleHowToPlay();
+            } else {
+                this.updateMovement();
+            }
         });
 
         // Tuş bırakıldığında
