@@ -101,63 +101,107 @@ class Maze {
         this.width = width;
         this.height = height;
         this.grid = this.generateMaze();
-        this.position = { x: 1, y: 1 };
-        this.rotation = { x: 0, y: 0, z: 0 }; // Top için dönüş açıları
+        this.ball = {
+            position: { x: 1, y: 1 },
+            rotation: { x: 0, y: 0, z: 0 }
+        };
         this.camera = {
-            distance: 5,
-            height: 3,
-            angle: 0
+            position: { x: 1, y: 1 },
+            height: 10,
+            velocity: { x: 0, y: 0 },
+            maxSpeed: 0.1,
+            acceleration: 0.008,
+            friction: 0.95
         };
         this.rotationSpeed = Math.PI;
         this.lastTime = performance.now();
-        this.moveSpeed = 0.1;
+        this.moveSpeed = 0.05;
         this.currentMove = null;
+        this.targetPosition = { x: 1, y: 1 };
+        this.lerpFactor = 0.1;
+        this.moveDirection = { x: 0, y: 0 };
     }
 
-    // Hareket başlatma
     startMove(dx, dy) {
-        if (this.currentMove) return;
-        
         // Hedef pozisyonu hesapla
-        const targetX = Math.floor(this.position.x) + dx;
-        const targetY = Math.floor(this.position.y) + dy;
+        const targetX = this.ball.position.x + dx;
+        const targetY = this.ball.position.y + dy;
         
         // Sınırları ve duvarları kontrol et
-        if (targetX < 0 || targetX >= this.width || 
-            targetY < 0 || targetY >= this.height ||
-            this.grid[targetY][targetX] === 1) {
+        const gridX = Math.floor(targetX);
+        const gridY = Math.floor(targetY);
+        
+        if (gridX < 0 || gridX >= this.width || 
+            gridY < 0 || gridY >= this.height ||
+            this.grid[gridY][gridX] === 1) {
             return; // Geçersiz hareket
         }
         
-        // Yeni hareket başlat
-        this.currentMove = {
-            startX: this.position.x,
-            startY: this.position.y,
-            targetX: targetX,
-            targetY: targetY,
-            progress: 0,
-            dx: dx,
-            dy: dy
-        };
+        // Hareket yönünü güncelle
+        this.moveDirection = { x: dx, y: dy };
+        
+        // Hedef pozisyonu güncelle
+        this.targetPosition.x = targetX;
+        this.targetPosition.y = targetY;
+        this.currentMove = { dx, dy };
     }
 
-    // Hareketi güncelle
     updateMovement() {
-        if (!this.currentMove) return;
-        
-        // Hareket ilerlemesini güncelle
-        this.currentMove.progress += this.moveSpeed;
-        
-        if (this.currentMove.progress >= 1) {
-            // Hareket tamamlandı
-            this.position.x = this.currentMove.targetX;
-            this.position.y = this.currentMove.targetY;
-            this.currentMove = null;
-        } else {
-            // Ara pozisyonu hesapla
-            this.position.x = this.currentMove.startX + (this.currentMove.targetX - this.currentMove.startX) * this.currentMove.progress;
-            this.position.y = this.currentMove.startY + (this.currentMove.targetY - this.currentMove.startY) * this.currentMove.progress;
+        if (!this.currentMove) {
+            // Hareket yoksa sürtünme uygula
+            this.camera.velocity.x *= this.camera.friction;
+            this.camera.velocity.y *= this.camera.friction;
+            return;
         }
+     
+        // Top hareketi
+        const dx = this.targetPosition.x - this.ball.position.x;
+        const dy = this.targetPosition.y - this.ball.position.y;
+        
+        this.ball.position.x += dx * this.lerpFactor;
+        this.ball.position.y += dy * this.lerpFactor;
+
+        // Hareket tamamlandı mı kontrol et
+        if (Math.abs(dx) < 0.01 && Math.abs(dy) < 0.01) {
+            this.ball.position.x = this.targetPosition.x;
+            this.ball.position.y = this.targetPosition.y;
+            this.currentMove = null;
+            this.moveDirection = { x: 0, y: 0 };
+        }
+
+        // Kamera hareketi için hız hesapla
+        const targetDx = this.ball.position.x - this.camera.position.x;
+        const targetDy = this.ball.position.y - this.camera.position.y;
+        const distance = Math.sqrt(targetDx * targetDx + targetDy * targetDy);
+
+        if (distance > 0.01) {
+            // Normalize edilmiş yön vektörü
+            const dirX = targetDx / distance;
+            const dirY = targetDy / distance;
+
+            // Hızı güncelle (ivmelenme)
+            this.camera.velocity.x += dirX * this.camera.acceleration;
+            this.camera.velocity.y += dirY * this.camera.acceleration;
+
+            // Maksimum hızı sınırla
+            const currentSpeed = Math.sqrt(
+                this.camera.velocity.x * this.camera.velocity.x + 
+                this.camera.velocity.y * this.camera.velocity.y
+            );
+            if (currentSpeed > this.camera.maxSpeed) {
+                const scale = this.camera.maxSpeed / currentSpeed;
+                this.camera.velocity.x *= scale;
+                this.camera.velocity.y *= scale;
+            }
+        }
+
+        // Kamera pozisyonunu güncelle
+        this.camera.position.x += this.camera.velocity.x;
+        this.camera.position.y += this.camera.velocity.y;
+
+        // Sürtünme uygula
+        this.camera.velocity.x *= this.camera.friction;
+        this.camera.velocity.y *= this.camera.friction;
     }
 
     updateRotation() {
@@ -166,21 +210,21 @@ class Maze {
         this.lastTime = currentTime;
 
         if (this.currentMove) {
-            // Hareket yönüne göre dönüş
+            // Top dönüşünü hareket yönüne göre güncelle
             const dx = this.currentMove.dx;
             const dy = this.currentMove.dy;
 
-            // Hareket yönüne göre dönüş açılarını güncelle
+            // X ve Z eksenleri etrafında dönüş
             if (dx !== 0) {
-                this.rotation.z += -dx * this.rotationSpeed * deltaTime;
+                this.ball.rotation.z += -Math.sign(dx) * this.rotationSpeed * deltaTime;
             }
             if (dy !== 0) {
-                this.rotation.x += dy * this.rotationSpeed * deltaTime;
+                this.ball.rotation.x += Math.sign(dy) * this.rotationSpeed * deltaTime;
             }
 
             // Açıları normalize et
-            this.rotation.x = this.rotation.x % (Math.PI * 2);
-            this.rotation.z = this.rotation.z % (Math.PI * 2);
+            this.ball.rotation.x = this.ball.rotation.x % (Math.PI * 2);
+            this.ball.rotation.z = this.ball.rotation.z % (Math.PI * 2);
         }
 
         // Hareketi güncelle
@@ -411,7 +455,7 @@ class Renderer {
         for (let i = 0; i < 6; i++) colors.push(1,1,1,1);
         this.floorVertexCount = 6;
         // --- TOPU KÜRE OLARAK EKLE ---
-        const player = this.maze.position;
+        const player = this.maze.ball.position;
         const px = player.x + offsetX + 0.5;
         const py = player.y + offsetY + 0.5;
         const pz = 0.5;
@@ -446,7 +490,7 @@ class Renderer {
 
                 vertices.push(x, y, z);
                 normals.push(nx, ny, nz);
-                colors.push(1.0, 0.0, 0.0, 1.0);
+                colors.push(1.0, 1.0, 1.0, 1.0);
                 uvs.push(u, v);
             }
         }
@@ -476,7 +520,7 @@ class Renderer {
                     normals.push(
                         normals[first * 3], normals[first * 3 + 1], normals[first * 3 + 2]
                     );
-                    colors.push(1.0, 0.0, 0.0, 1.0);
+                    colors.push(1.0, 1.0, 1.0, 1.0);
                 }
 
                 // UV koordinatları
@@ -520,25 +564,21 @@ class Renderer {
         this.gl.clear(this.gl.COLOR_BUFFER_BIT | this.gl.DEPTH_BUFFER_BIT);
         this.gl.useProgram(this.shaderProgram);
 
-        // Kamera pozisyonunu güncelle
         const aspect = this.gl.canvas.width / this.gl.canvas.height;
         const projectionMatrix = createPerspectiveMatrix(Math.PI / 4, aspect, 0.1, 100.0);
         
         const offsetX = -this.maze.width / 2;
         const offsetY = -this.maze.height / 2;
-        const player = this.maze.position;
+        const player = this.maze.ball.position;
         const px = player.x + offsetX + 0.5;
         const py = player.y + offsetY + 0.5;
 
-        // Kamera pozisyonunu hesapla
-        const cameraX = px + Math.cos(this.maze.camera.angle) * this.maze.camera.distance;
-        const cameraY = py + Math.sin(this.maze.camera.angle) * this.maze.camera.distance;
-        const cameraZ = this.maze.camera.height;
+        // Kamera pozisyonunu topun üzerine yerleştir
+        const cameraHeight = 10; // Kamera yüksekliği
+        const eye = [px, py, cameraHeight]; // Kamera pozisyonu
+        const center = [px, py, 0]; // Bakış noktası (top)
+        const up = [0, 1, 0]; // Yukarı vektörü
 
-        const eye = [cameraX, cameraY, cameraZ];
-        const center = [px, py, 0.5]; // Topun merkezi
-        const up = [0, 0, 1];
-        
         const modelViewMatrix = createLookAtMatrix(eye, center, up);
 
         // Shader'a matrisleri gönder
@@ -603,9 +643,9 @@ class Renderer {
         }
         
         // Dönüş matrislerini uygula
-        const rotateX = this.maze.rotation.x;
-        const rotateY = this.maze.rotation.y;
-        const rotateZ = this.maze.rotation.z;
+        const rotateX = this.maze.ball.rotation.x;
+        const rotateY = this.maze.ball.rotation.y;
+        const rotateZ = this.maze.ball.rotation.z;
         
         // X ekseni etrafında dönüş
         const cosX = Math.cos(rotateX);
@@ -667,34 +707,60 @@ class Game {
         this.maze = new Maze(20, 20);
         this.renderer = new Renderer(this.gl, this.maze);
         
+        // FPS ve frame time takibi için değişkenler
+        this.lastFrameTime = performance.now();
+        this.frameCount = 0;
+        this.lastFpsUpdate = performance.now();
+        this.currentFps = 0;
+        
+        // Tuş takibi için
+        this.pressedKeys = new Set();
+        
         this.setupEventListeners();
+        this.createFpsDisplay();
         this.animate();
     }
 
+    createFpsDisplay() {
+        this.fpsDisplay = document.createElement('div');
+        this.fpsDisplay.style.position = 'fixed';
+        this.fpsDisplay.style.top = '10px';
+        this.fpsDisplay.style.left = '10px';
+        this.fpsDisplay.style.color = 'white';
+        this.fpsDisplay.style.fontFamily = 'monospace';
+        this.fpsDisplay.style.fontSize = '14px';
+        this.fpsDisplay.style.backgroundColor = 'rgba(0,0,0,0.5)';
+        this.fpsDisplay.style.padding = '5px';
+        document.body.appendChild(this.fpsDisplay);
+    }
+
+    updateFpsCounter() {
+        const currentTime = performance.now();
+        const deltaTime = currentTime - this.lastFrameTime;
+        this.frameCount++;
+
+        // Her saniye FPS'i güncelle
+        if (currentTime - this.lastFpsUpdate > 1000) {
+            this.currentFps = Math.round((this.frameCount * 1000) / (currentTime - this.lastFpsUpdate));
+            this.fpsDisplay.textContent = `FPS: ${this.currentFps} | Frame Time: ${deltaTime.toFixed(2)}ms`;
+            this.lastFpsUpdate = currentTime;
+            this.frameCount = 0;
+        }
+
+        this.lastFrameTime = currentTime;
+    }
+
     setupEventListeners() {
+        // Tuşa basıldığında
         document.addEventListener('keydown', (e) => {
-            switch(e.key.toLowerCase()) {
-                case 'w': 
-                case 'arrowup':
-                    // Sola hareket
-                    this.maze.startMove(-1, 0);
-                    break;
-                case 's':
-                case 'arrowdown':
-                    // Sağa hareket
-                    this.maze.startMove(1, 0);
-                    break;
-                case 'a':
-                case 'arrowleft':
-                    // Yukarı hareket
-                    this.maze.startMove(0, -1);
-                    break;
-                case 'd':
-                case 'arrowright':
-                    // Aşağı hareket
-                    this.maze.startMove(0, 1);
-                    break;
-            }
+            this.pressedKeys.add(e.key.toLowerCase());
+            this.updateMovement();
+        });
+
+        // Tuş bırakıldığında
+        document.addEventListener('keyup', (e) => {
+            this.pressedKeys.delete(e.key.toLowerCase());
+            this.updateMovement();
         });
 
         // Pencere boyutu değiştiğinde canvas'ı yeniden boyutlandır
@@ -705,8 +771,42 @@ class Game {
         });
     }
 
+    updateMovement() {
+        let dx = 0;
+        let dy = 0;
+
+        // Yatay hareket
+        if (this.pressedKeys.has('a') || this.pressedKeys.has('arrowleft')) {
+            dx -= 1;
+        }
+        if (this.pressedKeys.has('d') || this.pressedKeys.has('arrowright')) {
+            dx += 1;
+        }
+
+        // Dikey hareket
+        if (this.pressedKeys.has('w') || this.pressedKeys.has('arrowup')) {
+            dy += 1;
+        }
+        if (this.pressedKeys.has('s') || this.pressedKeys.has('arrowdown')) {
+            dy -= 1;
+        }
+
+        // Çapraz hareket için normalize etme
+        if (dx !== 0 && dy !== 0) {
+            const length = Math.sqrt(dx * dx + dy * dy);
+            dx /= length;
+            dy /= length;
+        }
+
+        // Hareket varsa uygula
+        if (dx !== 0 || dy !== 0) {
+            this.maze.startMove(dx, dy);
+        }
+    }
+
     animate() {
         this.renderer.render();
+        this.updateFpsCounter();
         requestAnimationFrame(() => this.animate());
     }
 }
