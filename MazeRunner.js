@@ -101,124 +101,112 @@ class Maze {
         this.width = width;
         this.height = height;
         this.grid = this.generateMaze();
+        
+        // Initialize Box2D world with zero gravity
+        this.world = new b2World(new b2Vec2(0, 0), true);
+        
+        // Create ball body
+        const bodyDef = new b2BodyDef();
+        bodyDef.type = b2Body.b2_dynamicBody;
+        bodyDef.position.Set(1, 1);
+        bodyDef.linearDamping = 1.0; // Added linear damping to reduce maximum speed
+        this.ballBody = this.world.CreateBody(bodyDef);
+        
+        const fixDef = new b2FixtureDef();
+        fixDef.density = 1.0;
+        fixDef.friction = 0.5; // Increased friction from 0.3 to 0.5
+        fixDef.restitution = 0.2; // Reduced restitution for less bouncy behavior
+        fixDef.shape = new b2CircleShape(0.3);
+        this.ballBody.CreateFixture(fixDef);
+
+        // Create maze walls
+        bodyDef.type = b2Body.b2_staticBody;
+        fixDef.shape = new b2PolygonShape();
+        fixDef.shape.SetAsBox(0.5, 0.5);
+        
+        for (let i = 0; i < this.height; i++) {
+            for (let j = 0; j < this.width; j++) {
+                if (this.grid[i][j] === 1) {
+                    bodyDef.position.x = j;
+                    bodyDef.position.y = i;
+                    this.world.CreateBody(bodyDef).CreateFixture(fixDef);
+                }
+            }
+        }
+
         this.ball = {
             position: { x: 1, y: 1 },
             rotation: { x: 0, y: 0, z: 0 },
-            radius: 0.3,  // Top yarıçapı
-            rotationSpeed: Math.PI * 2  // Tam tur dönüş hızı
+            radius: 0.3,
+            rotationSpeed: Math.PI * 2
         };
+
         this.camera = {
             position: { x: 1, y: 1 },
             height: 10,
-            velocity: { x: 0, y: 0 },
-            maxSpeed: 0.1,
-            acceleration: 0.008,
-            friction: 0.95
+            targetHeight: 10,
+            lerpFactor: 0.05,
+            heightLerpFactor: 0.02
         };
+
         this.lastTime = performance.now();
-        this.moveSpeed = 0.05;
-        this.currentMove = null;
-        this.targetPosition = { x: 1, y: 1 };
-        this.lerpFactor = 0.1;
         this.moveDirection = { x: 0, y: 0 };
     }
 
     startMove(dx, dy) {
-        const targetX = this.ball.position.x + dx;
-        const targetY = this.ball.position.y + dy;
-        
-        const gridX = Math.floor(targetX);
-        const gridY = Math.floor(targetY);
-        
-        if (gridX < 0 || gridX >= this.width || 
-            gridY < 0 || gridY >= this.height ||
-            this.grid[gridY][gridX] === 1) {
-            return;
-        }
-        
+        // Apply force to the ball instead of direct position change
+        const force = new b2Vec2(dx * 1.0, dy * 1.0); // Reduced force magnitude from 2 to 1
+        this.ballBody.ApplyForce(force, this.ballBody.GetWorldCenter());
         this.moveDirection = { x: dx, y: dy };
-        this.targetPosition.x = targetX;
-        this.targetPosition.y = targetY;
-        this.currentMove = { dx, dy };
     }
 
     updateMovement() {
         const currentTime = performance.now();
-        const deltaTime = (currentTime - this.lastTime) / 1000; // Saniye cinsinden geçen süre
+        const deltaTime = (currentTime - this.lastTime) / 1000;
         this.lastTime = currentTime;
 
-        if (!this.currentMove) {
-            this.camera.velocity.x *= this.camera.friction;
-            this.camera.velocity.y *= this.camera.friction;
-            return;
-        }
-     
-        // Top hareketi
-        const dx = this.targetPosition.x - this.ball.position.x;
-        const dy = this.targetPosition.y - this.ball.position.y;
+        // Update physics world
+        this.world.Step(1/60, 8, 3);
+
+        // Get ball position from physics world
+        const pos = this.ballBody.GetPosition();
+        this.ball.position.x = pos.x;
+        this.ball.position.y = pos.y;
+
+        // Calculate ball rotation based on velocity
+        const vel = this.ballBody.GetLinearVelocity();
+        const moveDistance = Math.sqrt(vel.x * vel.x + vel.y * vel.y);
         
-        const moveX = dx * this.lerpFactor;
-        const moveY = dy * this.lerpFactor;
-
-        // Top pozisyonunu güncelle
-        this.ball.position.x += moveX;
-        this.ball.position.y += moveY;
-
-        // Topun yuvarlanma animasyonu
-        const moveDistance = Math.sqrt(moveX * moveX + moveY * moveY);
+        // Apply maximum speed limit
+        const maxSpeed = 3.0; // Maximum speed limit
+        if (moveDistance > maxSpeed) {
+            vel.Multiply(maxSpeed / moveDistance);
+            this.ballBody.SetLinearVelocity(vel);
+        }
+        
         if (moveDistance > 0.001) {
-            // Hareket yönüne dik olan eksen etrafında dönme
             const rotationAngle = (moveDistance / this.ball.radius) * this.ball.rotationSpeed * deltaTime;
+            const normalizedVelX = vel.x / moveDistance;
+            const normalizedVelY = vel.y / moveDistance;
             
-            // Hareket yönüne göre dönme eksenlerini hesapla
-            const normalizedDx = moveX / moveDistance;
-            const normalizedDy = moveY / moveDistance;
-
-            // Y ekseni etrafında dönüş (x yönündeki hareket için)
-            this.ball.rotation.y += rotationAngle * normalizedDx;
-
-            // X ekseni etrafında dönüş (y yönündeki hareket için)
-            this.ball.rotation.x -= rotationAngle * normalizedDy;
+            this.ball.rotation.y += rotationAngle * normalizedVelX;
+            this.ball.rotation.x -= rotationAngle * normalizedVelY;
         }
 
-        // Hareket tamamlandı mı kontrol et
-        if (Math.abs(dx) < 0.01 && Math.abs(dy) < 0.01) {
-            this.ball.position.x = this.targetPosition.x;
-            this.ball.position.y = this.targetPosition.y;
-            this.currentMove = null;
-            this.moveDirection = { x: 0, y: 0 };
-        }
+        // Smooth camera movement with adjusted lerp factors
+        const targetX = this.ball.position.x;
+        const targetY = this.ball.position.y;
+        
+        this.camera.position.x += (targetX - this.camera.position.x) * this.camera.lerpFactor;
+        this.camera.position.y += (targetY - this.camera.position.y) * this.camera.lerpFactor;
+        
+        // Smooth camera height adjustment with separate lerp factor
+        const targetHeight = 10 + moveDistance * 1.5;
+        this.camera.height += (targetHeight - this.camera.height) * this.camera.heightLerpFactor;
 
-        // Kamera hareketi için hız hesapla
-        const targetDx = this.ball.position.x - this.camera.position.x;
-        const targetDy = this.ball.position.y - this.camera.position.y;
-        const distance = Math.sqrt(targetDx * targetDx + targetDy * targetDy);
-
-        if (distance > 0.01) {
-            const dirX = targetDx / distance;
-            const dirY = targetDy / distance;
-
-            this.camera.velocity.x += dirX * this.camera.acceleration;
-            this.camera.velocity.y += dirY * this.camera.acceleration;
-
-            const currentSpeed = Math.sqrt(
-                this.camera.velocity.x * this.camera.velocity.x + 
-                this.camera.velocity.y * this.camera.velocity.y
-            );
-            if (currentSpeed > this.camera.maxSpeed) {
-                const scale = this.camera.maxSpeed / currentSpeed;
-                this.camera.velocity.x *= scale;
-                this.camera.velocity.y *= scale;
-            }
-        }
-
-        // Kamera pozisyonunu güncelle
-        this.camera.position.x += this.camera.velocity.x;
-        this.camera.position.y += this.camera.velocity.y;
-
-        // Sürtünme uygula
-        this.camera.velocity.x *= this.camera.friction;
-        this.camera.velocity.y *= this.camera.friction;
+        // Apply stronger friction to ball
+        vel.Multiply(0.90); // Increased friction from 0.95 to 0.90
+        this.ballBody.SetLinearVelocity(vel);
     }
 
     generateMaze() {
