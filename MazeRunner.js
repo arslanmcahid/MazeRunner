@@ -102,8 +102,18 @@ class Maze {
         this.height = height;
         this.grid = this.generateMaze();
         
+        // Check if Box2D is loaded
+        if (typeof b2World === 'undefined') {
+            console.error('Box2D is not loaded!');
+            alert('Box2D library is not loaded. Please check if Box2D.js is included.');
+            return;
+        }
+        
+        console.log('Box2D loaded successfully');
+        
         // Initialize Box2D world with zero gravity
         this.world = new b2World(new b2Vec2(0, 0), true);
+        console.log('Box2D world created');
         
         // Create ball body
         const bodyDef = new b2BodyDef();
@@ -155,9 +165,11 @@ class Maze {
 
     startMove(dx, dy) {
         // Apply force to the ball instead of direct position change
+        console.log('startMove called with:', dx, dy);
         const force = new b2Vec2(dx * 1.0, dy * 1.0); // Reduced force magnitude from 2 to 1
         this.ballBody.ApplyForce(force, this.ballBody.GetWorldCenter());
         this.moveDirection = { x: dx, y: dy };
+        console.log('Ball position after force:', this.ballBody.GetPosition().x, this.ballBody.GetPosition().y);
     }
 
     updateMovement() {
@@ -170,8 +182,15 @@ class Maze {
 
         // Get ball position from physics world
         const pos = this.ballBody.GetPosition();
+        const oldX = this.ball.position.x;
+        const oldY = this.ball.position.y;
         this.ball.position.x = pos.x;
         this.ball.position.y = pos.y;
+        
+        // Debug: Log position changes
+        if (Math.abs(oldX - pos.x) > 0.001 || Math.abs(oldY - pos.y) > 0.001) {
+            console.log('Ball moved from', oldX, oldY, 'to', pos.x, pos.y);
+        }
 
         // Calculate ball rotation based on velocity
         const vel = this.ballBody.GetLinearVelocity();
@@ -545,6 +564,9 @@ class Renderer {
         const aspect = this.gl.canvas.width / this.gl.canvas.height;
         const projectionMatrix = createPerspectiveMatrix(Math.PI / 4, aspect, 0.1, 100.0);
         
+        // Top için dönüş matrisini güncelle
+        this.maze.updateMovement();
+        
         const offsetX = -this.maze.width / 2;
         const offsetY = -this.maze.height / 2;
         const player = this.maze.ball.position;
@@ -564,9 +586,6 @@ class Renderer {
         const uModelViewMatrix = this.gl.getUniformLocation(this.shaderProgram, 'uModelViewMatrix');
         this.gl.uniformMatrix4fv(uProjectionMatrix, false, projectionMatrix);
         this.gl.uniformMatrix4fv(uModelViewMatrix, false, modelViewMatrix);
-
-        // Top için dönüş matrisini güncelle
-        this.maze.updateMovement();
 
         // Attribute ayarları
         const positionAttributeLocation = this.gl.getAttribLocation(this.shaderProgram, 'aVertexPosition');
@@ -662,6 +681,9 @@ class Renderer {
         this.gl.bindTexture(this.gl.TEXTURE_2D, this.textures.ball);
         this.gl.uniform1i(this.gl.getUniformLocation(this.shaderProgram, 'uTexture'), 0);
         this.gl.drawArrays(this.gl.TRIANGLES, this.playerStartIdx, this.playerVertexCount);
+        
+        // Buffer'ları her frame güncelle (top pozisyonu için)
+        this.setupBuffers();
     }
 }
 
