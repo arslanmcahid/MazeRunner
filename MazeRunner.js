@@ -115,25 +115,25 @@ class Maze {
         this.world = new b2World(new b2Vec2(0, 0), true);
         console.log('Box2D world created');
         
-        // Create ball body with larger radius
+        // Create ball body with larger radius - ASTRAY PHYSICS
         const bodyDef = new b2BodyDef();
         bodyDef.type = b2Body.b2_dynamicBody;
         bodyDef.position.Set(1, 1);
-        bodyDef.linearDamping = 0.5;
+        // bodyDef.linearDamping = 0.5;  // Remove linear damping for Astray physics
         this.ballBody = this.world.CreateBody(bodyDef);
         
         const fixDef = new b2FixtureDef();
         fixDef.density = 1.0;
-        fixDef.friction = 0.4;
-        fixDef.restitution = 0.6;
-        fixDef.shape = new b2CircleShape(0.4);
+        fixDef.friction = 0.0;  // ASTRAY: No friction
+        fixDef.restitution = 0.02;  // MINIMAL BOUNCE: Almost no bounce - was 0.1, now 0.02
+        fixDef.shape = new b2CircleShape(0.25);  // SMALLER: Reduced from 0.35 to 0.25
         this.ballBody.CreateFixture(fixDef);
 
         // Create maze walls
         bodyDef.type = b2Body.b2_staticBody;
         fixDef.shape = new b2PolygonShape();
         fixDef.shape.SetAsBox(0.5, 0.5);
-        fixDef.restitution = 0.4;
+        fixDef.restitution = 0.02;  // MINIMAL BOUNCE: Reduced from 0.4 to 0.02
         fixDef.friction = 0.1;
         
         for (let i = 0; i < this.height; i++) {
@@ -149,70 +149,44 @@ class Maze {
         this.ball = {
             position: { x: 1, y: 1 },
             rotation: { x: 0, y: 0, z: 0 },
-            radius: 0.4,
+            radius: 0.25,  // SMALLER: Reduced from 0.35 to 0.25
             rotationSpeed: Math.PI * 2
         };
 
         this.camera = {
             position: { x: 1, y: 1 },
             height: 5,
-            lerpFactor: 0.05
+            lerpFactor: 0.1  // ASTRAY: Faster camera follow (0.1 vs 0.05)
         };
 
         this.lastTime = performance.now();
-        this.moveDirection = { x: 0, y: 0 };
-        this.currentForce = { x: 0, y: 0 };
-        this.maxForce = 4.0;
-        this.deceleration = 20.0;
-        this.isMoving = false;
+        // ASTRAY MOVEMENT SYSTEM
+        this.keyAxis = [0, 0];  // Astray uses keyAxis array instead of moveDirection
         this.collectibles = [];
         this.score = 0;
         this.createCollectibles();
     }
 
-    startMove(dx, dy) {
-        this.isMoving = true;
-        this.moveDirection.x = dx;
-        this.moveDirection.y = dy;
-    }
-
-    stopMove() {
-        this.isMoving = false;
+    // ASTRAY MOVEMENT METHODS - Replace old movement system
+    setMovement(x, y) {
+        this.keyAxis = [x, y];
     }
 
     updateMovement() {
-        const currentTime = performance.now();
-        const deltaTime = (currentTime - this.lastTime) / 1000;
-        this.lastTime = currentTime;
+        // ASTRAY PHYSICS - Apply "friction" (reduced for more speed)
+        const lv = this.ballBody.GetLinearVelocity();
+        lv.Multiply(0.99);  // Further reduced friction: 0.99 instead of 0.98 for even more speed
+        this.ballBody.SetLinearVelocity(lv);
+        
+        // ASTRAY PHYSICS - Apply user-directed force (increased for faster acceleration)
+        const f = new b2Vec2(
+            this.keyAxis[0] * this.ballBody.GetMass() * 1.2,  // Increased from 0.75 to 1.2 (60% faster acceleration)
+            this.keyAxis[1] * this.ballBody.GetMass() * 1.2   // Increased from 0.75 to 1.2 (60% faster acceleration)
+        );
+        this.ballBody.ApplyImpulse(f, this.ballBody.GetPosition());
+        this.keyAxis = [0, 0];  // Reset keyAxis after applying force
 
-        // Get current velocity
-        const vel = this.ballBody.GetLinearVelocity();
-        const currentSpeed = Math.sqrt(vel.x * vel.x + vel.y * vel.y);
-        const maxSpeed = 1.0;
-
-        if (this.isMoving) {
-            // Sabit kuvvet uygula
-            const force = new b2Vec2(
-                this.moveDirection.x * this.maxForce,
-                this.moveDirection.y * this.maxForce
-            );
-            this.ballBody.ApplyForce(force, this.ballBody.GetWorldCenter());
-        } else {
-            // Hareket yoksa hızlı bir şekilde durdur
-            if (currentSpeed > 0.01) {
-                const decelerationForce = this.deceleration * deltaTime;
-                vel.x = this.moveTowards(vel.x, 0, decelerationForce);
-                vel.y = this.moveTowards(vel.y, 0, decelerationForce);
-                this.ballBody.SetLinearVelocity(vel);
-            } else {
-                // Tamamen dur ve dönmeyi sıfırla
-                this.ballBody.SetLinearVelocity(new b2Vec2(0, 0));
-                this.ball.rotation.x = 0;
-                this.ball.rotation.z = 0;
-            }
-        }
-
-        // Update physics world
+        // Take a time step
         this.world.Step(1/60, 8, 3);
 
         // Get ball position
@@ -220,44 +194,19 @@ class Maze {
         this.ball.position.x = pos.x;
         this.ball.position.y = pos.y;
 
-        // Hız limitini kesin olarak uygula
-        if (currentSpeed > maxSpeed) {
-            const scale = maxSpeed / currentSpeed;
-            vel.Multiply(scale);
-            this.ballBody.SetLinearVelocity(vel);
-        }
-
-        // Update ball rotation only when actually moving
-        const ROTATION_THRESHOLD = 0.05; // Reduced threshold for slower movement
-        if (currentSpeed > ROTATION_THRESHOLD) {
-            const rotationAngle = (currentSpeed / this.ball.radius) * this.ball.rotationSpeed * deltaTime;
-            const normalizedVelX = vel.x / currentSpeed;
-            const normalizedVelY = vel.y / currentSpeed;
-            
-            this.ball.rotation.x += rotationAngle * normalizedVelY;
-            this.ball.rotation.z -= rotationAngle * normalizedVelX;
-        } else {
-            // Çok yavaş veya durmuş durumda - dönmeyi yumuşak şekilde sıfırla
-            this.ball.rotation.x *= 0.95;
-            this.ball.rotation.z *= 0.95;
-        }
-
-        // Update camera position smoothly
-        const targetX = this.ball.position.x;
-        const targetY = this.ball.position.y;
+        // ASTRAY BALL ROTATION - Update ball rotation based on movement
+        const stepX = pos.x - this.ball.position.x;
+        const stepY = pos.y - this.ball.position.y;
         
-        this.camera.position.x += (targetX - this.camera.position.x) * this.camera.lerpFactor;
-        this.camera.position.y += (targetY - this.camera.position.y) * this.camera.lerpFactor;
+        this.ball.rotation.x += stepY / this.ball.radius;
+        this.ball.rotation.z -= stepX / this.ball.radius;
+
+        // ASTRAY CAMERA - Update camera position smoothly
+        this.camera.position.x += (this.ball.position.x - this.camera.position.x) * this.camera.lerpFactor;
+        this.camera.position.y += (this.ball.position.y - this.camera.position.y) * this.camera.lerpFactor;
 
         // Check for collectible collection
         this.checkCollectibles();
-    }
-
-    moveTowards(current, target, maxChange) {
-        if (Math.abs(current - target) <= maxChange) {
-            return target;
-        }
-        return current - Math.sign(current) * maxChange;
     }
 
     generateMaze() {
@@ -374,8 +323,8 @@ class Renderer {
             texture.repeat.set(maze.width/2, maze.height/2);
         });
 
-        // Create ball with larger radius
-        const ballGeometry = new THREE.SphereGeometry(0.4, 32, 32);
+        // Create ball with smaller radius (0.25)
+        const ballGeometry = new THREE.SphereGeometry(0.25, 32, 32);
         const ballMaterial = new THREE.MeshPhongMaterial({
             map: ballTexture,
             specular: 0x555555,
@@ -403,8 +352,10 @@ class Renderer {
         floor.position.set(maze.width / 2, -0.5, maze.height / 2);
         this.scene.add(floor);
 
-        // Set initial camera position
-        this.camera.position.set(maze.width / 2, 7, maze.height / 2);
+        // Set initial camera position for overview
+        const mazeSize = Math.max(maze.width, maze.height);
+        this.overviewHeight = mazeSize * 1.2;  // Height to see full maze
+        this.camera.position.set(maze.width / 2, this.overviewHeight, maze.height / 2);
         this.camera.lookAt(maze.width / 2, 0, maze.height / 2);
 
         // Load emerald texture
@@ -424,7 +375,7 @@ class Renderer {
         const pos = this.maze.ball.position;
         this.ballMesh.position.set(
             pos.x,
-            0.4,
+            0.25,  // Smaller ball height (radius)
             pos.y
         );
         
@@ -436,13 +387,8 @@ class Renderer {
             rot.z
         );
         
-        // Update camera position
-        const targetX = this.maze.camera.position.x;
-        const targetZ = this.maze.camera.position.y;
-        const targetY = this.maze.camera.height;
-        
-        this.camera.position.set(targetX, targetY, targetZ);
-        this.camera.lookAt(new THREE.Vector3(targetX, 0, targetZ));
+        // Update camera position based on game state
+        this.updateCameraPosition();
         
         // Update collectibles rotation and visibility
         this.collectibleMeshes.forEach((mesh, index) => {
@@ -505,6 +451,66 @@ class Renderer {
             this.collectibleMeshes.push(mesh);
         });
     }
+
+    updateCameraPosition() {
+        // Get camera state from game
+        const game = window.gameInstance;
+        if (!game) {
+            // Fallback to normal following if no game instance
+            const targetX = this.maze.camera.position.x;
+            const targetZ = this.maze.camera.position.y;
+            const targetY = this.maze.camera.height;
+            
+            this.camera.position.set(targetX, targetY, targetZ);
+            this.camera.lookAt(new THREE.Vector3(targetX, 0, targetZ));
+            return;
+        }
+
+        if (game.cameraState === 'overview') {
+            // Overview mode: Show entire maze from above
+            const targetX = this.maze.width / 2;
+            const targetZ = this.maze.height / 2;
+            const targetY = this.overviewHeight;
+            
+            this.camera.position.set(targetX, targetY, targetZ);
+            this.camera.lookAt(new THREE.Vector3(targetX, 0, targetZ));
+            
+        } else if (game.cameraState === 'transition') {
+            // Transition mode: Smooth interpolation
+            const t = game.cameraTransition; // 0-1 easing
+            
+            // Overview position
+            const overviewX = this.maze.width / 2;
+            const overviewY = this.overviewHeight;
+            const overviewZ = this.maze.height / 2;
+            
+            // Following position
+            const followingX = this.maze.camera.position.x;
+            const followingY = this.maze.camera.height;
+            const followingZ = this.maze.camera.position.y;
+            
+            // Smooth easing function
+            const easeInOut = t => t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
+            const easedT = easeInOut(t);
+            
+            // Interpolate positions
+            const currentX = overviewX + (followingX - overviewX) * easedT;
+            const currentY = overviewY + (followingY - overviewY) * easedT;
+            const currentZ = overviewZ + (followingZ - overviewZ) * easedT;
+            
+            this.camera.position.set(currentX, currentY, currentZ);
+            this.camera.lookAt(new THREE.Vector3(followingX, 0, followingZ));
+            
+        } else {
+            // Following mode: Normal ball following
+            const targetX = this.maze.camera.position.x;
+            const targetZ = this.maze.camera.position.y;
+            const targetY = this.maze.camera.height;
+            
+            this.camera.position.set(targetX, targetY, targetZ);
+            this.camera.lookAt(new THREE.Vector3(targetX, 0, targetZ));
+        }
+    }
 }
 
 class Game {
@@ -531,12 +537,29 @@ class Game {
         this.lastFpsUpdate = performance.now();
         this.currentFps = 0;
         
-        this.activeKey = null; // Şu anda basılı olan tuş
+        // ASTRAY: Initialize keys object for keyboard handling
+        this.keys = {};
+        
+        // CAMERA SYSTEM: Overview -> Following transition
+        this.cameraState = 'overview';  // 'overview' or 'following'
+        this.overviewDuration = 10000;   // 10 seconds overview
+        this.gameStartTime = performance.now();
+        this.cameraTransition = 0;      // 0-1 transition progress
+        
+        // TIMER SYSTEM
+        this.gameplayStartTime = null;  // When actual gameplay starts
+        this.isGameplayActive = false;  // Flag to control timer
         
         this.setupEventListeners();
         this.createFpsDisplay();
         this.createHowToPlayScreen();
         this.scoreDisplay = this.createScoreDisplay();
+        this.createCountdownDisplay();
+        this.createTimerDisplay();
+        
+        // Set global game instance for renderer access
+        window.gameInstance = this;
+        
         this.animate();
     }
 
@@ -596,14 +619,20 @@ class Game {
                     <li>⬇️ S or Down Arrow: Move Backward</li>
                     <li>⬅️ A or Left Arrow: Move Left</li>
                     <li>➡️ D or Right Arrow: Move Right</li>
+                    <li>🎮 H, J, K, L: Vim-style movement (Astray compatible)</li>
                 </ul>
                 <p><strong>Additional Controls:</strong></p>
                 <ul style="list-style-type: none; padding-left: 20px;">
-                    <li>🎮 Diagonal Movement: Press two direction keys simultaneously</li>
                     <li>ℹ️ I Key: Toggle this help screen</li>
                 </ul>
+                <p><strong>Camera System:</strong></p>
+                <ul style="list-style-type: none; padding-left: 20px;">
+                    <li>📷 Overview: Game starts with full maze view</li>
+                    <li>🎮 Auto-transition: Camera follows ball after 3s or first movement</li>
+                    <li>🔄 Smooth transition: 2-second smooth camera movement</li>
+                </ul>
                 <p><strong>Objective:</strong></p>
-                <p style="padding-left: 20px;">Navigate through the maze and find your way to the exit. Avoid hitting the walls!</p>
+                <p style="padding-left: 20px;">Navigate through the maze and collect emerald gems to increase your score! Uses Astray-style physics for realistic ball movement.</p>
                 <p style="text-align: center; margin-top: 20px; color: #888;">
                     Press 'I' again to close this window
                 </p>
@@ -622,7 +651,7 @@ class Game {
     }
 
     setupEventListeners() {
-        // Tuşa basıldığında
+        // ASTRAY STYLE KEYBOARD HANDLING
         document.addEventListener('keydown', (e) => {
             const key = e.key.toLowerCase();
             
@@ -631,51 +660,17 @@ class Game {
                 return;
             }
 
-            // Eğer zaten bu tuş basılıysa, tekrar işleme
-            if (this.activeKey === key) {
-                return;
-            }
-
-            this.activeKey = key;
-            let dx = 0;
-            let dy = 0;
-
-            // Yön tuşlarına göre hareket yönünü belirle
-            switch(key) {
-                case 'w':
-                case 'arrowup':
-                    dy = -1;
-                    break;
-                case 's':
-                case 'arrowdown':
-                    dy = 1;
-                    break;
-                case 'a':
-                case 'arrowleft':
-                    dx = -1;
-                    break;
-                case 'd':
-                case 'arrowright':
-                    dx = 1;
-                    break;
-            }
-
-            // Eğer geçerli bir yön tuşuysa hareketi başlat
-            if (dx !== 0 || dy !== 0) {
-                this.maze.startMove(dx, dy);
-            }
+            this.keys = this.keys || {};
+            this.keys[key] = true;
+            this.updateKeyAxis();
         });
 
-        // Tuş bırakıldığında
         document.addEventListener('keyup', (e) => {
             const key = e.key.toLowerCase();
             
-            // Sadece aktif tuş bırakıldıysa hareketi durdur
-            if (key === this.activeKey) {
-                this.activeKey = null;
-                this.maze.stopMove();
-                this.maze.ballBody.SetLinearVelocity(new b2Vec2(0, 0));
-            }
+            this.keys = this.keys || {};
+            this.keys[key] = false;
+            this.updateKeyAxis();
         });
 
         // Pencere boyutu değiştiğinde
@@ -685,6 +680,18 @@ class Game {
             this.gl.viewport(0, 0, this.canvas.width, this.canvas.height);
             this.renderer.onWindowResize();
         });
+    }
+
+    // ASTRAY STYLE KEY AXIS UPDATE
+    updateKeyAxis() {
+        let x = 0, y = 0;
+        
+        if (this.keys['arrowleft'] || this.keys['a'] || this.keys['h']) x = -1;
+        if (this.keys['arrowright'] || this.keys['d'] || this.keys['l']) x = 1;
+        if (this.keys['arrowup'] || this.keys['w'] || this.keys['k']) y = -1;
+        if (this.keys['arrowdown'] || this.keys['s'] || this.keys['j']) y = 1;
+        
+        this.maze.setMovement(x, y);
     }
 
     createScoreDisplay() {
@@ -702,12 +709,140 @@ class Game {
         return scoreDiv;
     }
 
+    createCountdownDisplay() {
+        this.countdownDisplay = document.createElement('div');
+        this.countdownDisplay.style.position = 'fixed';
+        this.countdownDisplay.style.top = '50%';
+        this.countdownDisplay.style.left = '50%';
+        this.countdownDisplay.style.transform = 'translate(-50%, -50%)';
+        this.countdownDisplay.style.color = '#FFD700';  // Gold color
+        this.countdownDisplay.style.fontFamily = 'Arial, sans-serif';
+        this.countdownDisplay.style.fontSize = '120px';  // Very large
+        this.countdownDisplay.style.fontWeight = 'bold';
+        this.countdownDisplay.style.textAlign = 'center';
+        this.countdownDisplay.style.textShadow = '4px 4px 8px rgba(0,0,0,0.8)';
+        this.countdownDisplay.style.backgroundColor = 'rgba(0,0,0,0.7)';
+        this.countdownDisplay.style.padding = '30px 50px';
+        this.countdownDisplay.style.borderRadius = '20px';
+        this.countdownDisplay.style.border = '3px solid #FFD700';
+        this.countdownDisplay.style.zIndex = '1000';
+        this.countdownDisplay.style.display = 'none';  // Hidden initially
+        this.countdownDisplay.innerHTML = `
+            <div style="font-size: 24px; margin-bottom: 10px; color: #FFF;">Game starts in</div>
+            <div id="countdown-number" style="font-size: 120px;">3</div>
+            <div style="font-size: 18px; margin-top: 10px; color: #CCC;">Press any movement key to start immediately</div>
+        `;
+        document.body.appendChild(this.countdownDisplay);
+    }
+
+    createTimerDisplay() {
+        this.timerDisplay = document.createElement('div');
+        this.timerDisplay.style.position = 'fixed';
+        this.timerDisplay.style.top = '10px';
+        this.timerDisplay.style.right = '10px';
+        this.timerDisplay.style.color = 'white';
+        this.timerDisplay.style.fontFamily = 'monospace';
+        this.timerDisplay.style.fontSize = '18px';
+        this.timerDisplay.style.fontWeight = 'bold';
+        this.timerDisplay.style.backgroundColor = 'rgba(0,0,0,0.7)';
+        this.timerDisplay.style.padding = '8px 12px';
+        this.timerDisplay.style.borderRadius = '5px';
+        this.timerDisplay.style.border = '1px solid rgba(255,255,255,0.3)';
+        this.timerDisplay.style.zIndex = '999';
+        this.timerDisplay.style.display = 'none';  // Hidden initially
+        this.timerDisplay.style.minWidth = '80px';
+        this.timerDisplay.style.textAlign = 'center';
+        this.timerDisplay.innerHTML = `
+            <div style="font-size: 12px; color: #CCC; margin-bottom: 2px;">TIME</div>
+            <div id="timer-seconds" style="font-size: 18px; color: #4CAF50;">00:00</div>
+        `;
+        document.body.appendChild(this.timerDisplay);
+    }
+
     animate() {
+        // Update camera state system
+        this.updateCameraState();
+        
+        // Update timer if gameplay is active
+        this.updateTimer();
+        
         this.maze.updateMovement();
         this.renderer.render();
         this.updateFpsCounter();
         this.scoreDisplay.textContent = `Score: ${this.maze.score / 10}`;
         requestAnimationFrame(() => this.animate());
+    }
+
+    updateCameraState() {
+        const currentTime = performance.now();
+        const elapsedTime = currentTime - this.gameStartTime;
+        
+        if (this.cameraState === 'overview') {
+            // Show countdown during overview
+            this.countdownDisplay.style.display = 'block';
+            
+            // Calculate remaining time and update countdown
+            const remainingTime = Math.max(0, this.overviewDuration - elapsedTime);
+            const countdownNumber = Math.ceil(remainingTime / 1000);
+            const countdownElement = document.getElementById('countdown-number');
+            
+            if (countdownElement && countdownNumber > 0) {
+                countdownElement.textContent = countdownNumber.toString();
+                
+                // Add pulse animation on number change
+                const lastDisplayedNumber = parseInt(countdownElement.getAttribute('data-last-number') || '4');
+                if (countdownNumber !== lastDisplayedNumber) {
+                    countdownElement.style.transform = 'scale(1.2)';
+                    countdownElement.style.color = '#FF6B6B';  // Red flash
+                    setTimeout(() => {
+                        countdownElement.style.transform = 'scale(1)';
+                        countdownElement.style.color = '#FFD700';  // Back to gold
+                    }, 200);
+                    countdownElement.setAttribute('data-last-number', countdownNumber.toString());
+                }
+            }
+            
+            // Check if overview period is over or user moved
+            const userMoved = Object.values(this.keys).some(key => key === true);
+            
+            if (elapsedTime > this.overviewDuration || userMoved) {
+                this.cameraState = 'transition';
+                this.transitionStartTime = currentTime;
+                this.transitionDuration = 2000; // 2 seconds transition
+                this.countdownDisplay.style.display = 'none';  // Hide countdown
+            }
+            
+        } else if (this.cameraState === 'transition') {
+            // Update transition progress
+            const transitionElapsed = currentTime - this.transitionStartTime;
+            this.cameraTransition = Math.min(transitionElapsed / this.transitionDuration, 1.0);
+            
+            if (this.cameraTransition >= 1.0) {
+                this.cameraState = 'following';
+                // Start the gameplay timer when following mode begins
+                if (!this.isGameplayActive) {
+                    this.gameplayStartTime = currentTime;
+                    this.isGameplayActive = true;
+                    this.timerDisplay.style.display = 'block';  // Show timer
+                }
+            }
+        }
+        // 'following' state continues indefinitely
+    }
+
+    updateTimer() {
+        if (!this.isGameplayActive || !this.gameplayStartTime) return;
+        
+        const currentTime = performance.now();
+        const elapsedTime = currentTime - this.gameplayStartTime;
+        
+        const timerDisplay = document.getElementById('timer-seconds');
+        if (timerDisplay) {
+            const minutes = Math.floor(elapsedTime / 60000);
+            const seconds = Math.floor((elapsedTime % 60000) / 1000);
+            const formattedTime = `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+            timerDisplay.textContent = formattedTime;
+        }
     }
 }
 
