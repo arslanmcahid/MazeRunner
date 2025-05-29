@@ -153,26 +153,26 @@ class Maze {
 
         this.camera = {
             position: { x: 1, y: 1 },
-            height: 5, // Decreased from 10 to 5 for closer view
-            targetHeight: 5, // Decreased from 10 to 5
-            lerpFactor: 0.05,
-            heightLerpFactor: 0.02
+            height: 5, // Fixed camera height
+            lerpFactor: 0.05
         };
 
         this.lastTime = performance.now();
         this.moveDirection = { x: 0, y: 0 };
+        this.acceleration = 15.0; // Hızlanma ve yavaşlama için ivme
+        this.targetVelocity = { x: 0, y: 0 }; // Hedef hız
     }
 
     startMove(dx, dy) {
-        // Apply force to the ball instead of direct position change
-        const force = new b2Vec2(dx * 5.0, dy * 5.0); // Arttırılmış kuvvet
-        this.ballBody.ApplyForce(force, this.ballBody.GetWorldCenter());
-        this.moveDirection = { x: dx, y: dy };
-        
-        // Hareket durumunu güncelle
-        const pos = this.ballBody.GetPosition();
-        this.ball.position.x = pos.x;
-        this.ball.position.y = pos.y;
+        // Hedef hızı ayarla
+        this.targetVelocity.x = dx * 3.0;
+        this.targetVelocity.y = dy * 3.0;
+    }
+
+    stopMove() {
+        // Hedef hızı sıfırla
+        this.targetVelocity.x = 0;
+        this.targetVelocity.y = 0;
     }
 
     updateMovement() {
@@ -183,29 +183,34 @@ class Maze {
         // Update physics world
         this.world.Step(1/60, 8, 3);
 
-        // Get ball position from physics world
+        // Get ball position and velocity
         const pos = this.ballBody.GetPosition();
+        const vel = this.ballBody.GetLinearVelocity();
+
+        // Update position
         this.ball.position.x = pos.x;
         this.ball.position.y = pos.y;
 
-        // Calculate ball rotation based on velocity
-        const vel = this.ballBody.GetLinearVelocity();
-        const moveDistance = Math.sqrt(vel.x * vel.x + vel.y * vel.y);
+        // Yumuşak hızlanma ve yavaşlama
+        const currentVelX = vel.x;
+        const currentVelY = vel.y;
         
-        // Apply maximum speed limit
-        const maxSpeed = 5.0; // Arttırılmış maksimum hız
-        if (moveDistance > maxSpeed) {
-            vel.Multiply(maxSpeed / moveDistance);
-            this.ballBody.SetLinearVelocity(vel);
-        }
+        // Hedef hıza doğru ivmelenme
+        const newVelX = this.moveTowards(currentVelX, this.targetVelocity.x, this.acceleration * deltaTime);
+        const newVelY = this.moveTowards(currentVelY, this.targetVelocity.y, this.acceleration * deltaTime);
+        
+        // Yeni hızı uygula
+        this.ballBody.SetLinearVelocity(new b2Vec2(newVelX, newVelY));
+
+        // Calculate movement distance for rotation
+        const moveDistance = Math.sqrt(newVelX * newVelX + newVelY * newVelY);
         
         // Update ball rotation based on movement
         if (moveDistance > 0.001) {
             const rotationAngle = (moveDistance / this.ball.radius) * this.ball.rotationSpeed * deltaTime;
-            const normalizedVelX = vel.x / moveDistance;
-            const normalizedVelY = vel.y / moveDistance;
+            const normalizedVelX = newVelX / moveDistance;
+            const normalizedVelY = newVelY / moveDistance;
             
-            // Update rotation based on movement direction
             this.ball.rotation.x += rotationAngle * normalizedVelY;
             this.ball.rotation.z -= rotationAngle * normalizedVelX;
         }
@@ -216,14 +221,17 @@ class Maze {
         
         this.camera.position.x += (targetX - this.camera.position.x) * this.camera.lerpFactor;
         this.camera.position.y += (targetY - this.camera.position.y) * this.camera.lerpFactor;
-        
-        // Dynamic camera height based on ball speed with lower base height
-        const targetHeight = 5 + moveDistance * 1.0; // Adjusted from 10 + moveDistance * 1.5
-        this.camera.height += (targetHeight - this.camera.height) * this.camera.heightLerpFactor;
+    }
 
-        // Apply less friction to ball
-        vel.Multiply(0.95); // Azaltılmış sürtünme
-        this.ballBody.SetLinearVelocity(vel);
+    // Bir değeri hedef değere doğru yumuşak şekilde hareket ettir
+    moveTowards(current, target, maxChange) {
+        if (current === target) {
+            return current;
+        }
+        
+        const difference = target - current;
+        const change = Math.min(Math.abs(difference), maxChange) * Math.sign(difference);
+        return current + change;
     }
 
     generateMaze() {
@@ -503,20 +511,24 @@ class Game {
         // Tuşa basıldığında
         document.addEventListener('keydown', (e) => {
             const key = e.key.toLowerCase();
-            this.pressedKeys.add(key);
-            
-            // I tuşuna basıldığında how to play ekranını aç/kapa
-            if (key === 'i') {
-                this.toggleHowToPlay();
-            } else {
-                this.updateMovement();
+            if (!this.pressedKeys.has(key)) {
+                this.pressedKeys.add(key);
+                
+                if (key === 'i') {
+                    this.toggleHowToPlay();
+                }
             }
         });
 
         // Tuş bırakıldığında
         document.addEventListener('keyup', (e) => {
             this.pressedKeys.delete(e.key.toLowerCase());
-            this.updateMovement();
+            if (this.pressedKeys.size === 0) {
+                this.maze.stopMove();
+            } else {
+                // Eğer hala basılı tuşlar varsa, onların yönünde hareket et
+                this.updateMovement();
+            }
         });
 
         // Pencere boyutu değiştiğinde canvas'ı yeniden boyutlandır
@@ -541,10 +553,10 @@ class Game {
 
         // Dikey hareket
         if (this.pressedKeys.has('w') || this.pressedKeys.has('arrowup')) {
-            dy -= 1;  // Değiştirildi: Yukarı hareket için negatif y
+            dy -= 1;
         }
         if (this.pressedKeys.has('s') || this.pressedKeys.has('arrowdown')) {
-            dy += 1;  // Değiştirildi: Aşağı hareket için pozitif y
+            dy += 1;
         }
 
         // Çapraz hareket için normalize etme
@@ -554,10 +566,8 @@ class Game {
             dy /= length;
         }
 
-        // Hareket varsa uygula
-        if (dx !== 0 || dy !== 0) {
-            this.maze.startMove(dx, dy);
-        }
+        // Hareket yönünü güncelle
+        this.maze.startMove(dx, dy);
 
         // Fizik ve görüntü güncellemesi
         this.maze.updateMovement();
