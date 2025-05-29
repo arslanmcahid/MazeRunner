@@ -164,6 +164,7 @@ class Maze {
         this.keyAxis = [0, 0];  // Astray uses keyAxis array instead of moveDirection
         this.collectibles = [];
         this.score = 0;
+        this.gameCompleted = false;  // Victory flag
         this.createCollectibles();
     }
 
@@ -276,12 +277,62 @@ class Maze {
                 Math.abs(ballX - collectible.x) < 0.5 && 
                 Math.abs(ballY - collectible.y) < 0.5) {
                 collectible.collected = true;
-                this.score += 10;
+                this.score += 100;  // 100 points per emerald (base score)
                 console.log('Score:', this.score);
             }
             // Zümrütü döndür
             collectible.rotationY += 0.02;
         });
+
+        // Victory check - all emeralds collected
+        const allCollected = this.collectibles.every(collectible => collectible.collected);
+        if (allCollected && !this.gameCompleted) {
+            this.gameCompleted = true;
+            // Notify game instance
+            if (window.gameInstance) {
+                window.gameInstance.showVictoryScreen();
+            }
+        }
+    }
+
+    calculateFinalScore(completionTimeMs) {
+        const emeraldCount = this.collectibles.length;
+        const collectedCount = this.collectibles.filter(c => c.collected).length;
+        
+        // Base score: 100 points per emerald
+        const baseScore = collectedCount * 100;
+        
+        // Perfect completion bonus
+        const perfectBonus = (collectedCount === emeraldCount) ? 500 : 0;
+        
+        // Time bonus calculation (faster = higher bonus)
+        const completionTimeSeconds = completionTimeMs / 1000;
+        const targetTime = 60; // Target: 60 seconds for perfect time bonus
+        const maxTimeBonus = 1000;
+        
+        // Time bonus decreases as time increases
+        const timeBonus = Math.max(0, maxTimeBonus - (completionTimeSeconds - targetTime) * 10);
+        
+        // Speed multiplier (1.0 to 2.0)
+        const speedMultiplier = completionTimeSeconds <= targetTime ? 
+            1.5 + (targetTime - completionTimeSeconds) / targetTime * 0.5 : 
+            Math.max(1.0, 1.5 - (completionTimeSeconds - targetTime) / targetTime * 0.3);
+        
+        // Final score calculation
+        const finalScore = Math.round((baseScore + perfectBonus + timeBonus) * speedMultiplier);
+        
+        return {
+            finalScore,
+            breakdown: {
+                baseScore,
+                perfectBonus,
+                timeBonus: Math.round(timeBonus),
+                speedMultiplier: speedMultiplier.toFixed(2),
+                emeraldCount: collectedCount,
+                totalEmeralds: emeraldCount,
+                completionTime: completionTimeSeconds.toFixed(1)
+            }
+        };
     }
 }
 
@@ -597,6 +648,7 @@ class Game {
         this.scoreDisplay = this.createScoreDisplay();
         this.createCountdownDisplay();
         this.createTimerDisplay();
+        this.createVictoryScreen();
         
         // Set global game instance for renderer access
         window.gameInstance = this;
@@ -800,6 +852,139 @@ class Game {
         document.body.appendChild(this.timerDisplay);
     }
 
+    createVictoryScreen() {
+        this.victoryScreen = document.createElement('div');
+        this.victoryScreen.style.position = 'fixed';
+        this.victoryScreen.style.top = '50%';
+        this.victoryScreen.style.left = '50%';
+        this.victoryScreen.style.transform = 'translate(-50%, -50%)';
+        this.victoryScreen.style.backgroundColor = 'rgba(0, 0, 0, 0.95)';
+        this.victoryScreen.style.color = 'white';
+        this.victoryScreen.style.padding = '40px';
+        this.victoryScreen.style.borderRadius = '15px';
+        this.victoryScreen.style.fontFamily = 'Arial, sans-serif';
+        this.victoryScreen.style.fontSize = '16px';
+        this.victoryScreen.style.minWidth = '400px';
+        this.victoryScreen.style.maxWidth = '600px';
+        this.victoryScreen.style.display = 'none';
+        this.victoryScreen.style.zIndex = '2000';
+        this.victoryScreen.style.boxShadow = '0 0 30px rgba(255, 215, 0, 0.3)';
+        this.victoryScreen.style.border = '2px solid #FFD700';
+        this.victoryScreen.style.textAlign = 'center';
+
+        // Initial placeholder content (will be updated when game is won)
+        this.victoryScreen.innerHTML = `
+            <h2 style="color: #FFD700;">Victory!</h2>
+            <p>Congratulations on completing the maze!</p>
+        `;
+
+        document.body.appendChild(this.victoryScreen);
+    }
+
+    showVictoryScreen() {
+        // Stop the timer
+        this.isGameplayActive = false;
+        
+        // Calculate final time
+        const finalTime = performance.now() - this.gameplayStartTime;
+        const minutes = Math.floor(finalTime / 60000);
+        const seconds = Math.floor((finalTime % 60000) / 1000);
+        const formattedTime = `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+        
+        // Calculate advanced score
+        const scoreData = this.maze.calculateFinalScore(finalTime);
+        
+        // Get performance rating
+        const getRating = (score) => {
+            if (score >= 2500) return { text: "LEGENDARY", color: "#FFD700", emoji: "👑" };
+            if (score >= 2000) return { text: "EXCELLENT", color: "#FF6B6B", emoji: "🔥" };
+            if (score >= 1500) return { text: "GREAT", color: "#4ECDC4", emoji: "⭐" };
+            if (score >= 1000) return { text: "GOOD", color: "#45B7D1", emoji: "✨" };
+            return { text: "NICE TRY", color: "#95A5A6", emoji: "👍" };
+        };
+        
+        const rating = getRating(scoreData.finalScore);
+        
+        // Update victory screen content
+        this.victoryScreen.innerHTML = `
+            <h2 style="color: #FFD700; margin-bottom: 15px; text-align: center; font-size: 28px;">🏆 MAZE COMPLETED! 🏆</h2>
+            
+            <div style="text-align: center; line-height: 1.6;">
+                <div style="background: linear-gradient(45deg, ${rating.color}20, ${rating.color}10); border: 2px solid ${rating.color}; border-radius: 10px; padding: 15px; margin: 20px 0;">
+                    <h3 style="color: ${rating.color}; margin: 0; font-size: 24px;">${rating.emoji} ${rating.text} ${rating.emoji}</h3>
+                </div>
+                
+                <div style="background: rgba(255, 255, 255, 0.1); border-radius: 10px; padding: 20px; margin: 20px 0;">
+                    <p style="font-size: 24px; color: #FFD700; margin: 10px 0; font-weight: bold;">🎯 FINAL SCORE: ${scoreData.finalScore.toLocaleString()}</p>
+                    <p style="font-size: 16px; margin: 8px 0;">💎 Emeralds: ${scoreData.breakdown.emeraldCount}/${scoreData.breakdown.totalEmeralds}</p>
+                    <p style="font-size: 16px; margin: 8px 0;">⏱️ Time: ${formattedTime}</p>
+                </div>
+                
+                <div style="background: rgba(0, 0, 0, 0.3); border-radius: 8px; padding: 15px; margin: 15px 0; text-align: left; font-size: 14px;">
+                    <h4 style="color: #4CAF50; margin: 0 0 10px 0; text-align: center;">Score Breakdown:</h4>
+                    <p style="margin: 5px 0;">📦 Base Score: ${scoreData.breakdown.baseScore}</p>
+                    <p style="margin: 5px 0;">🎁 Perfect Bonus: ${scoreData.breakdown.perfectBonus}</p>
+                    <p style="margin: 5px 0;">⚡ Speed Bonus: ${scoreData.breakdown.timeBonus}</p>
+                    <p style="margin: 5px 0;">🚀 Speed Multiplier: ${scoreData.breakdown.speedMultiplier}x</p>
+                </div>
+                
+                <div style="margin-top: 30px;">
+                    <button id="newGameBtn" style="
+                        background: linear-gradient(45deg, #4CAF50, #45a049);
+                        color: white;
+                        border: none;
+                        padding: 15px 30px;
+                        font-size: 18px;
+                        border-radius: 10px;
+                        cursor: pointer;
+                        font-weight: bold;
+                        box-shadow: 0 4px 15px rgba(76, 175, 80, 0.3);
+                        transition: all 0.3s ease;
+                        margin: 0 10px;
+                    " onmouseover="this.style.transform='scale(1.05)'" onmouseout="this.style.transform='scale(1)'">🎮 Play Again</button>
+                </div>
+                
+                <p style="text-align: center; margin-top: 20px; color: #888; font-size: 12px;">
+                    💡 Tip: Complete faster for higher scores!
+                </p>
+            </div>
+        `;
+        
+        // Show victory screen
+        this.victoryScreen.style.display = 'block';
+        
+        // Add event listener for new game button
+        document.getElementById('newGameBtn').addEventListener('click', () => {
+            this.startNewGame();
+        });
+    }
+
+    startNewGame() {
+        // Hide victory screen
+        this.victoryScreen.style.display = 'none';
+        
+        // Reset game state
+        this.cameraState = 'overview';
+        this.gameStartTime = performance.now();
+        this.gameplayStartTime = null;
+        this.isGameplayActive = false;
+        this.cameraTransition = 0;
+        
+        // Hide timer
+        this.timerDisplay.style.display = 'none';
+        
+        // Create new maze
+        this.maze = new Maze(20, 20);
+        this.renderer.maze = this.maze;
+        
+        // Reset renderer
+        this.renderer.scene.clear();
+        this.renderer = new Renderer(this.gl, this.maze);
+        
+        // Update score display
+        this.scoreDisplay.textContent = `Score: 0`;
+    }
+
     animate() {
         // Update camera state system
         this.updateCameraState();
@@ -810,7 +995,7 @@ class Game {
         this.maze.updateMovement();
         this.renderer.render();
         this.updateFpsCounter();
-        this.scoreDisplay.textContent = `Score: ${this.maze.score / 10}`;
+        this.scoreDisplay.textContent = `Score: ${this.maze.score}`;
         requestAnimationFrame(() => this.animate());
     }
 
