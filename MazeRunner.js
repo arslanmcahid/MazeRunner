@@ -189,17 +189,20 @@ class Maze {
         // Take a time step
         this.world.Step(1/60, 8, 3);
 
-        // Get ball position
+        // Get ball position and calculate movement for rotation
         const pos = this.ballBody.GetPosition();
+        
+        // Calculate movement step for rotation (before updating ball position)
+        const stepX = pos.x - this.ball.position.x;
+        const stepY = pos.y - this.ball.position.y;
+        
+        // Update ball position
         this.ball.position.x = pos.x;
         this.ball.position.y = pos.y;
 
         // ASTRAY BALL ROTATION - Update ball rotation based on movement
-        const stepX = pos.x - this.ball.position.x;
-        const stepY = pos.y - this.ball.position.y;
-        
-        this.ball.rotation.x += stepY / this.ball.radius;
-        this.ball.rotation.z -= stepX / this.ball.radius;
+        this.ball.rotation.x += stepY / this.ball.radius * 2;  // Multiply by 2 for more visible rotation
+        this.ball.rotation.z -= stepX / this.ball.radius * 2;  // Multiply by 2 for more visible rotation
 
         // ASTRAY CAMERA - Update camera position smoothly
         this.camera.position.x += (this.ball.position.x - this.camera.position.x) * this.camera.lerpFactor;
