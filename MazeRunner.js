@@ -289,16 +289,24 @@ class Renderer {
         // Three.js setup
         this.scene = new THREE.Scene();
         this.camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+
+        this.scene.add(this.camera); // add camera to scene for add the light as a child of the camera i think
+        
         this.renderer = new THREE.WebGLRenderer({ canvas: document.getElementById('glCanvas'), antialias: true });
         this.renderer.setSize(window.innerWidth, window.innerHeight);
-        
-        // Setup lighting
-        const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
-        this.scene.add(ambientLight);
-        
-        const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
-        directionalLight.position.set(10, 20, 10);
-        this.scene.add(directionalLight);
+
+        // Fade in the ambient light & camera-spot settings
+        this.startAmbientIntensity = 0.6;
+        this.endAmbientIntensity = 0.0;
+        this.ambientLight = new THREE.AmbientLight(0xffffff, this.startAmbientIntensity);
+        this.scene.add(this.ambientLight);
+
+        this.cameraLight = new THREE.PointLight(
+            0xffffff, //color
+            2, //intensity
+            10, //distance
+            1); //decay
+        this.camera.add(this.cameraLight);
 
         // Texture loader
         const textureLoader = new THREE.TextureLoader();
@@ -389,6 +397,15 @@ class Renderer {
         
         // Update camera position based on game state
         this.updateCameraPosition();
+
+        // Keep the camera and light on the ball:
+        // const camH = this.maze.camera.height + 0.4;
+        // this.camera.position.set(pos.x, camH, pos.y);
+        // this.camera.lookAt(new THREE.Vector3(pos.x, 0.4, pos.y));
+        // since the cameralight is a child, no additional updates are required
+
+
+
         
         // Update collectibles rotation and visibility
         this.collectibleMeshes.forEach((mesh, index) => {
@@ -453,8 +470,29 @@ class Renderer {
     }
 
     updateCameraPosition() {
+        // const t = window.gameInstance.cameraTransition;
+        // this.ambientLight.intensity = THREE.MathUtils.lerp(
+        //     this.startAmbientIntensity, // in constructor = 0.6
+        //     this.endAmbientIntensity,
+        //     t // 0 overview, 1 following
+        // );
+
+
         // Get camera state from game
         const game = window.gameInstance;
+
+        const t = (game.cameraState === 'overview') 
+                    ? 0 
+                    : game.cameraTransition;
+                    this.ambientLight.intensity = THREE.MathUtils.lerp(
+                        this.startAmbientIntensity,
+                        this.endAmbientIntensity,
+                        t
+                    );
+
+        // this.cameraLight.intensity = THREE.MathUtils.lerp(
+        //     10, 0, t);
+
         if (!game) {
             // Fallback to normal following if no game instance
             const targetX = this.maze.camera.position.x;
