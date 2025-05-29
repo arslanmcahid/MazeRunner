@@ -119,20 +119,22 @@ class Maze {
         const bodyDef = new b2BodyDef();
         bodyDef.type = b2Body.b2_dynamicBody;
         bodyDef.position.Set(1, 1);
-        bodyDef.linearDamping = 1.0;
+        bodyDef.linearDamping = 0.5;
         this.ballBody = this.world.CreateBody(bodyDef);
         
         const fixDef = new b2FixtureDef();
         fixDef.density = 1.0;
-        fixDef.friction = 0.5;
-        fixDef.restitution = 0.2;
-        fixDef.shape = new b2CircleShape(0.4); // Increased from 0.3 to 0.4
+        fixDef.friction = 0.4;
+        fixDef.restitution = 0.6;
+        fixDef.shape = new b2CircleShape(0.4);
         this.ballBody.CreateFixture(fixDef);
 
         // Create maze walls
         bodyDef.type = b2Body.b2_staticBody;
         fixDef.shape = new b2PolygonShape();
         fixDef.shape.SetAsBox(0.5, 0.5);
+        fixDef.restitution = 0.4;
+        fixDef.friction = 0.1;
         
         for (let i = 0; i < this.height; i++) {
             for (let j = 0; j < this.width; j++) {
@@ -147,32 +149,35 @@ class Maze {
         this.ball = {
             position: { x: 1, y: 1 },
             rotation: { x: 0, y: 0, z: 0 },
-            radius: 0.4, // Increased from 0.3 to 0.4
+            radius: 0.4,
             rotationSpeed: Math.PI * 2
         };
 
         this.camera = {
             position: { x: 1, y: 1 },
-            height: 5, // Fixed camera height
+            height: 5,
             lerpFactor: 0.05
         };
 
         this.lastTime = performance.now();
         this.moveDirection = { x: 0, y: 0 };
-        this.acceleration = 15.0; // Hızlanma ve yavaşlama için ivme
-        this.targetVelocity = { x: 0, y: 0 }; // Hedef hız
+        this.currentForce = { x: 0, y: 0 };
+        this.maxForce = 4.0;
+        this.deceleration = 20.0;
+        this.isMoving = false;
+        this.collectibles = [];
+        this.score = 0;
+        this.createCollectibles();
     }
 
     startMove(dx, dy) {
-        // Hedef hızı ayarla
-        this.targetVelocity.x = dx * 3.0;
-        this.targetVelocity.y = dy * 3.0;
+        this.isMoving = true;
+        this.moveDirection.x = dx;
+        this.moveDirection.y = dy;
     }
 
     stopMove() {
-        // Hedef hızı sıfırla
-        this.targetVelocity.x = 0;
-        this.targetVelocity.y = 0;
+        this.isMoving = false;
     }
 
     updateMovement() {
@@ -180,39 +185,61 @@ class Maze {
         const deltaTime = (currentTime - this.lastTime) / 1000;
         this.lastTime = currentTime;
 
+        // Get current velocity
+        const vel = this.ballBody.GetLinearVelocity();
+        const currentSpeed = Math.sqrt(vel.x * vel.x + vel.y * vel.y);
+        const maxSpeed = 1.0;
+
+        if (this.isMoving) {
+            // Sabit kuvvet uygula
+            const force = new b2Vec2(
+                this.moveDirection.x * this.maxForce,
+                this.moveDirection.y * this.maxForce
+            );
+            this.ballBody.ApplyForce(force, this.ballBody.GetWorldCenter());
+        } else {
+            // Hareket yoksa hızlı bir şekilde durdur
+            if (currentSpeed > 0.01) {
+                const decelerationForce = this.deceleration * deltaTime;
+                vel.x = this.moveTowards(vel.x, 0, decelerationForce);
+                vel.y = this.moveTowards(vel.y, 0, decelerationForce);
+                this.ballBody.SetLinearVelocity(vel);
+            } else {
+                // Tamamen dur ve dönmeyi sıfırla
+                this.ballBody.SetLinearVelocity(new b2Vec2(0, 0));
+                this.ball.rotation.x = 0;
+                this.ball.rotation.z = 0;
+            }
+        }
+
         // Update physics world
         this.world.Step(1/60, 8, 3);
 
-        // Get ball position and velocity
+        // Get ball position
         const pos = this.ballBody.GetPosition();
-        const vel = this.ballBody.GetLinearVelocity();
-
-        // Update position
         this.ball.position.x = pos.x;
         this.ball.position.y = pos.y;
 
-        // Yumuşak hızlanma ve yavaşlama
-        const currentVelX = vel.x;
-        const currentVelY = vel.y;
-        
-        // Hedef hıza doğru ivmelenme
-        const newVelX = this.moveTowards(currentVelX, this.targetVelocity.x, this.acceleration * deltaTime);
-        const newVelY = this.moveTowards(currentVelY, this.targetVelocity.y, this.acceleration * deltaTime);
-        
-        // Yeni hızı uygula
-        this.ballBody.SetLinearVelocity(new b2Vec2(newVelX, newVelY));
+        // Hız limitini kesin olarak uygula
+        if (currentSpeed > maxSpeed) {
+            const scale = maxSpeed / currentSpeed;
+            vel.Multiply(scale);
+            this.ballBody.SetLinearVelocity(vel);
+        }
 
-        // Calculate movement distance for rotation
-        const moveDistance = Math.sqrt(newVelX * newVelX + newVelY * newVelY);
-        
-        // Update ball rotation based on movement
-        if (moveDistance > 0.001) {
-            const rotationAngle = (moveDistance / this.ball.radius) * this.ball.rotationSpeed * deltaTime;
-            const normalizedVelX = newVelX / moveDistance;
-            const normalizedVelY = newVelY / moveDistance;
+        // Update ball rotation only when actually moving
+        const ROTATION_THRESHOLD = 0.05; // Reduced threshold for slower movement
+        if (currentSpeed > ROTATION_THRESHOLD) {
+            const rotationAngle = (currentSpeed / this.ball.radius) * this.ball.rotationSpeed * deltaTime;
+            const normalizedVelX = vel.x / currentSpeed;
+            const normalizedVelY = vel.y / currentSpeed;
             
             this.ball.rotation.x += rotationAngle * normalizedVelY;
             this.ball.rotation.z -= rotationAngle * normalizedVelX;
+        } else {
+            // Çok yavaş veya durmuş durumda - dönmeyi yumuşak şekilde sıfırla
+            this.ball.rotation.x *= 0.95;
+            this.ball.rotation.z *= 0.95;
         }
 
         // Update camera position smoothly
@@ -221,17 +248,16 @@ class Maze {
         
         this.camera.position.x += (targetX - this.camera.position.x) * this.camera.lerpFactor;
         this.camera.position.y += (targetY - this.camera.position.y) * this.camera.lerpFactor;
+
+        // Check for collectible collection
+        this.checkCollectibles();
     }
 
-    // Bir değeri hedef değere doğru yumuşak şekilde hareket ettir
     moveTowards(current, target, maxChange) {
-        if (current === target) {
-            return current;
+        if (Math.abs(current - target) <= maxChange) {
+            return target;
         }
-        
-        const difference = target - current;
-        const change = Math.min(Math.abs(difference), maxChange) * Math.sign(difference);
-        return current + change;
+        return current - Math.sign(current) * maxChange;
     }
 
     generateMaze() {
@@ -261,6 +287,49 @@ class Maze {
         
         carve(1, 1);
         return grid;
+    }
+
+    createCollectibles() {
+        // Labirentin boş hücrelerini bul
+        const emptySpaces = [];
+        for (let i = 0; i < this.height; i++) {
+            for (let j = 0; j < this.width; j++) {
+                if (this.grid[i][j] === 0 && !(j === 1 && i === 1)) { // Başlangıç noktası hariç
+                    emptySpaces.push({x: j, y: i});
+                }
+            }
+        }
+
+        // Rastgele 10 nokta seç
+        const collectibleCount = Math.min(10, emptySpaces.length);
+        for (let i = 0; i < collectibleCount; i++) {
+            const randomIndex = Math.floor(Math.random() * emptySpaces.length);
+            const position = emptySpaces[randomIndex];
+            this.collectibles.push({
+                x: position.x,
+                y: position.y,
+                collected: false,
+                rotationY: 0 // Zümrütün dönüş açısı
+            });
+            emptySpaces.splice(randomIndex, 1);
+        }
+    }
+
+    checkCollectibles() {
+        const ballX = Math.round(this.ball.position.x);
+        const ballY = Math.round(this.ball.position.y);
+        
+        this.collectibles.forEach(collectible => {
+            if (!collectible.collected && 
+                Math.abs(ballX - collectible.x) < 0.5 && 
+                Math.abs(ballY - collectible.y) < 0.5) {
+                collectible.collected = true;
+                this.score += 10;
+                console.log('Score:', this.score);
+            }
+            // Zümrütü döndür
+            collectible.rotationY += 0.02;
+        });
     }
 }
 
@@ -306,7 +375,7 @@ class Renderer {
         });
 
         // Create ball with larger radius
-        const ballGeometry = new THREE.SphereGeometry(0.4, 32, 32); // Increased from 0.3 to 0.4
+        const ballGeometry = new THREE.SphereGeometry(0.4, 32, 32);
         const ballMaterial = new THREE.MeshPhongMaterial({
             map: ballTexture,
             specular: 0x555555,
@@ -334,32 +403,28 @@ class Renderer {
         floor.position.set(maze.width / 2, -0.5, maze.height / 2);
         this.scene.add(floor);
 
-        // Set initial camera position closer to ball
-        this.camera.position.set(maze.width / 2, 7, maze.height / 2); // Decreased height from 15 to 7
+        // Set initial camera position
+        this.camera.position.set(maze.width / 2, 7, maze.height / 2);
         this.camera.lookAt(maze.width / 2, 0, maze.height / 2);
+
+        // Load emerald texture
+        const emeraldTexture = textureLoader.load('assets/emerald.png', (texture) => {
+            console.log('Emerald texture loaded successfully');
+            texture.wrapS = THREE.RepeatWrapping;
+            texture.wrapT = THREE.RepeatWrapping;
+        });
+
+        // Create collectibles
+        this.collectibleMeshes = [];
+        this.createCollectibles(maze.collectibles);
     }
 
-    createMazeWalls() {
-        const wallGeometry = new THREE.BoxGeometry(1, 1, 1);
-        
-        for (let i = 0; i < this.maze.height; i++) {
-            for (let j = 0; j < this.maze.width; j++) {
-                if (this.maze.grid[i][j] === 1) {
-                    // Her duvar için materyal klonlanıyor
-                    const wall = new THREE.Mesh(wallGeometry, this.wallMaterial.clone());
-                    wall.position.set(j, 0.5, i);
-                    this.scene.add(wall);
-                }
-            }
-        }
-    }
-    
     render() {
         // Update ball position and rotation
         const pos = this.maze.ball.position;
         this.ballMesh.position.set(
             pos.x,
-            0.4, // Increased height from 0.3 to 0.4
+            0.4,
             pos.y
         );
         
@@ -379,6 +444,21 @@ class Renderer {
         this.camera.position.set(targetX, targetY, targetZ);
         this.camera.lookAt(new THREE.Vector3(targetX, 0, targetZ));
         
+        // Update collectibles rotation and visibility
+        this.collectibleMeshes.forEach((mesh, index) => {
+            const collectible = this.maze.collectibles[index];
+            if (collectible.collected) {
+                if (mesh.visible) {
+                    mesh.visible = false;
+                }
+            } else {
+                // Zümrütleri daha yavaş döndür ve yukarı aşağı hareket ettir
+                mesh.rotation.y = collectible.rotationY;
+                // Yukarı aşağı sallanma hareketi ekle
+                mesh.position.y = 1.0 + Math.sin(Date.now() * 0.002) * 0.1;
+            }
+        });
+        
         // Render scene
         this.renderer.render(this.scene, this.camera);
     }
@@ -388,6 +468,42 @@ class Renderer {
         this.camera.aspect = window.innerWidth / window.innerHeight;
         this.camera.updateProjectionMatrix();
         this.renderer.setSize(window.innerWidth, window.innerHeight);
+    }
+
+    createMazeWalls() {
+        const wallGeometry = new THREE.BoxGeometry(1, 1, 1);
+        
+        for (let i = 0; i < this.maze.height; i++) {
+            for (let j = 0; j < this.maze.width; j++) {
+                if (this.maze.grid[i][j] === 1) {
+                    const wall = new THREE.Mesh(wallGeometry, this.wallMaterial.clone());
+                    wall.position.set(j, 0.5, i);
+                    this.scene.add(wall);
+                }
+            }
+        }
+    }
+
+    createCollectibles(collectibles) {
+        // Zümrüt geometrisi (oktahedron şeklinde)
+        const emeraldGeometry = new THREE.OctahedronGeometry(0.2, 0);
+        const emeraldMaterial = new THREE.MeshPhongMaterial({
+            color: 0x50C878, // Zümrüt yeşili
+            emissive: 0x208040,
+            emissiveIntensity: 0.2,
+            shininess: 100,
+            specular: 0xFFFFFF,
+            transparent: true,
+            opacity: 0.9
+        });
+
+        collectibles.forEach(collectible => {
+            const mesh = new THREE.Mesh(emeraldGeometry, emeraldMaterial.clone());
+            // Zümrütleri yerden biraz yukarıda konumlandır
+            mesh.position.set(collectible.x, 1.0, collectible.y);
+            this.scene.add(mesh);
+            this.collectibleMeshes.push(mesh);
+        });
     }
 }
 
@@ -405,24 +521,22 @@ class Game {
         }
 
         this.gl.viewport(0, 0, this.canvas.width, this.canvas.height);
-        
         this.gl.enable(this.gl.DEPTH_TEST);
 
         this.maze = new Maze(20, 20);
         this.renderer = new Renderer(this.gl, this.maze);
         
-        // FPS ve frame time takibi için değişkenler
         this.lastFrameTime = performance.now();
         this.frameCount = 0;
         this.lastFpsUpdate = performance.now();
         this.currentFps = 0;
         
-        // Tuş takibi için
-        this.pressedKeys = new Set();
+        this.activeKey = null; // Şu anda basılı olan tuş
         
         this.setupEventListeners();
         this.createFpsDisplay();
         this.createHowToPlayScreen();
+        this.scoreDisplay = this.createScoreDisplay();
         this.animate();
     }
 
@@ -511,72 +625,88 @@ class Game {
         // Tuşa basıldığında
         document.addEventListener('keydown', (e) => {
             const key = e.key.toLowerCase();
-            if (!this.pressedKeys.has(key)) {
-                this.pressedKeys.add(key);
-                
-                if (key === 'i') {
-                    this.toggleHowToPlay();
-                }
+            
+            if (key === 'i') {
+                this.toggleHowToPlay();
+                return;
+            }
+
+            // Eğer zaten bu tuş basılıysa, tekrar işleme
+            if (this.activeKey === key) {
+                return;
+            }
+
+            this.activeKey = key;
+            let dx = 0;
+            let dy = 0;
+
+            // Yön tuşlarına göre hareket yönünü belirle
+            switch(key) {
+                case 'w':
+                case 'arrowup':
+                    dy = -1;
+                    break;
+                case 's':
+                case 'arrowdown':
+                    dy = 1;
+                    break;
+                case 'a':
+                case 'arrowleft':
+                    dx = -1;
+                    break;
+                case 'd':
+                case 'arrowright':
+                    dx = 1;
+                    break;
+            }
+
+            // Eğer geçerli bir yön tuşuysa hareketi başlat
+            if (dx !== 0 || dy !== 0) {
+                this.maze.startMove(dx, dy);
             }
         });
 
         // Tuş bırakıldığında
         document.addEventListener('keyup', (e) => {
-            this.pressedKeys.delete(e.key.toLowerCase());
-            if (this.pressedKeys.size === 0) {
+            const key = e.key.toLowerCase();
+            
+            // Sadece aktif tuş bırakıldıysa hareketi durdur
+            if (key === this.activeKey) {
+                this.activeKey = null;
                 this.maze.stopMove();
-            } else {
-                // Eğer hala basılı tuşlar varsa, onların yönünde hareket et
-                this.updateMovement();
+                this.maze.ballBody.SetLinearVelocity(new b2Vec2(0, 0));
             }
         });
 
-        // Pencere boyutu değiştiğinde canvas'ı yeniden boyutlandır
+        // Pencere boyutu değiştiğinde
         window.addEventListener('resize', () => {
             this.canvas.width = window.innerWidth;
             this.canvas.height = window.innerHeight;
             this.gl.viewport(0, 0, this.canvas.width, this.canvas.height);
+            this.renderer.onWindowResize();
         });
     }
 
-    updateMovement() {
-        let dx = 0;
-        let dy = 0;
-
-        // Yatay hareket
-        if (this.pressedKeys.has('a') || this.pressedKeys.has('arrowleft')) {
-            dx -= 1;
-        }
-        if (this.pressedKeys.has('d') || this.pressedKeys.has('arrowright')) {
-            dx += 1;
-        }
-
-        // Dikey hareket
-        if (this.pressedKeys.has('w') || this.pressedKeys.has('arrowup')) {
-            dy -= 1;
-        }
-        if (this.pressedKeys.has('s') || this.pressedKeys.has('arrowdown')) {
-            dy += 1;
-        }
-
-        // Çapraz hareket için normalize etme
-        if (dx !== 0 && dy !== 0) {
-            const length = Math.sqrt(dx * dx + dy * dy);
-            dx /= length;
-            dy /= length;
-        }
-
-        // Hareket yönünü güncelle
-        this.maze.startMove(dx, dy);
-
-        // Fizik ve görüntü güncellemesi
-        this.maze.updateMovement();
+    createScoreDisplay() {
+        const scoreDiv = document.createElement('div');
+        scoreDiv.style.position = 'fixed';
+        scoreDiv.style.top = '50px';
+        scoreDiv.style.left = '10px';
+        scoreDiv.style.color = 'white';
+        scoreDiv.style.fontFamily = 'monospace';
+        scoreDiv.style.fontSize = '20px';
+        scoreDiv.style.backgroundColor = 'rgba(0,0,0,0.5)';
+        scoreDiv.style.padding = '10px';
+        scoreDiv.style.borderRadius = '5px';
+        document.body.appendChild(scoreDiv);
+        return scoreDiv;
     }
 
     animate() {
-        this.updateMovement();  // Her frame'de hareketi güncelle
+        this.maze.updateMovement();
         this.renderer.render();
         this.updateFpsCounter();
+        this.scoreDisplay.textContent = `Score: ${this.maze.score / 10}`;
         requestAnimationFrame(() => this.animate());
     }
 }
