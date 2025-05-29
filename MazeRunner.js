@@ -182,49 +182,44 @@ class Maze {
 
         // Get ball position from physics world
         const pos = this.ballBody.GetPosition();
-        const oldX = this.ball.position.x;
-        const oldY = this.ball.position.y;
         this.ball.position.x = pos.x;
         this.ball.position.y = pos.y;
-        
-        // Debug: Log position changes
-        if (Math.abs(oldX - pos.x) > 0.001 || Math.abs(oldY - pos.y) > 0.001) {
-            console.log('Ball moved from', oldX, oldY, 'to', pos.x, pos.y);
-        }
 
         // Calculate ball rotation based on velocity
         const vel = this.ballBody.GetLinearVelocity();
         const moveDistance = Math.sqrt(vel.x * vel.x + vel.y * vel.y);
         
         // Apply maximum speed limit
-        const maxSpeed = 3.0; // Maximum speed limit
+        const maxSpeed = 3.0;
         if (moveDistance > maxSpeed) {
             vel.Multiply(maxSpeed / moveDistance);
             this.ballBody.SetLinearVelocity(vel);
         }
         
+        // Update ball rotation based on movement
         if (moveDistance > 0.001) {
             const rotationAngle = (moveDistance / this.ball.radius) * this.ball.rotationSpeed * deltaTime;
             const normalizedVelX = vel.x / moveDistance;
             const normalizedVelY = vel.y / moveDistance;
             
-            this.ball.rotation.y += rotationAngle * normalizedVelX;
-            this.ball.rotation.x -= rotationAngle * normalizedVelY;
+            // Update rotation based on movement direction
+            this.ball.rotation.x += rotationAngle * normalizedVelY;
+            this.ball.rotation.z -= rotationAngle * normalizedVelX;
         }
 
-        // Smooth camera movement with adjusted lerp factors
+        // Update camera position smoothly
         const targetX = this.ball.position.x;
         const targetY = this.ball.position.y;
         
         this.camera.position.x += (targetX - this.camera.position.x) * this.camera.lerpFactor;
         this.camera.position.y += (targetY - this.camera.position.y) * this.camera.lerpFactor;
         
-        // Smooth camera height adjustment with separate lerp factor
+        // Dynamic camera height based on ball speed
         const targetHeight = 10 + moveDistance * 1.5;
         this.camera.height += (targetHeight - this.camera.height) * this.camera.heightLerpFactor;
 
-        // Apply stronger friction to ball
-        vel.Multiply(0.90); // Increased friction from 0.95 to 0.90
+        // Apply friction to ball
+        vel.Multiply(0.90);
         this.ballBody.SetLinearVelocity(vel);
     }
 
@@ -260,430 +255,128 @@ class Maze {
 
 class Renderer {
     constructor(gl, maze) {
-        this.gl = gl;
         this.maze = maze;
-        this.textures = {};
-        this.setupShaders();
-        this.loadTextures();
-        this.setupBuffers();
-    }
-
-    setupShaders() {
-        const vsSource = `
-            attribute vec3 aVertexPosition;
-            attribute vec4 aVertexColor;
-            attribute vec3 aVertexNormal;
-            attribute vec2 aTexCoord;
-            uniform mat4 uModelViewMatrix;
-            uniform mat4 uProjectionMatrix;
-            varying vec4 vColor;
-            varying vec3 vNormal;
-            varying vec3 vPosition;
-            varying vec2 vTexCoord;
-            void main(void) {
-                vColor = aVertexColor;
-                vNormal = aVertexNormal;
-                vPosition = (uModelViewMatrix * vec4(aVertexPosition, 1.0)).xyz;
-                vTexCoord = aTexCoord;
-                gl_Position = uProjectionMatrix * uModelViewMatrix * vec4(aVertexPosition, 1.0);
-            }
-        `;
-
-        const fsSource = `
-            precision mediump float;
-            varying vec4 vColor;
-            varying vec3 vNormal;
-            varying vec3 vPosition;
-            varying vec2 vTexCoord;
-            uniform sampler2D uTexture;
-            void main(void) {
-                vec3 lightDir = normalize(vec3(0.0, 0.0, 1.0));
-                vec3 viewDir = normalize(-vPosition);
-                float ambient = 0.3;
-                float diff = max(dot(vNormal, lightDir), 0.0);
-                float specularStrength = 0.7;
-                vec3 reflectDir = reflect(-lightDir, vNormal);
-                float spec = pow(max(dot(viewDir, reflectDir), 0.0), 32.0);
-                float lighting = ambient + 0.5 * diff + specularStrength * spec;
-                vec4 texColor = texture2D(uTexture, vTexCoord);
-                gl_FragColor = vec4(vColor.rgb * texColor.rgb * lighting, vColor.a * texColor.a);
-            }
-        `;
-
-        const vertexShader = this.loadShader(this.gl.VERTEX_SHADER, vsSource);
-        const fragmentShader = this.loadShader(this.gl.FRAGMENT_SHADER, fsSource);
         
-        if (!vertexShader || !fragmentShader) {
-            return;
-        }
+        // Three.js setup
+        this.scene = new THREE.Scene();
+        this.camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        this.renderer = new THREE.WebGLRenderer({ canvas: document.getElementById('glCanvas'), antialias: true });
+        this.renderer.setSize(window.innerWidth, window.innerHeight);
         
-        this.shaderProgram = this.gl.createProgram();
-        this.gl.attachShader(this.shaderProgram, vertexShader);
-        this.gl.attachShader(this.shaderProgram, fragmentShader);
-        this.gl.linkProgram(this.shaderProgram);
-
-        if (!this.gl.getProgramParameter(this.shaderProgram, this.gl.LINK_STATUS)) {
-            alert('Shader programı oluşturulamadı: ' + this.gl.getProgramInfoLog(this.shaderProgram));
-            return;
-        }
-    }
-
-    loadShader(type, source) {
-        const shader = this.gl.createShader(type);
-        this.gl.shaderSource(shader, source);
-        this.gl.compileShader(shader);
+        // Setup lighting
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+        this.scene.add(ambientLight);
         
-        if (!this.gl.getShaderParameter(shader, this.gl.COMPILE_STATUS)) {
-            alert('Shader derleme hatası: ' + this.gl.getShaderInfoLog(shader));
-            this.gl.deleteShader(shader);
-            return null;
-        }
+        const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+        directionalLight.position.set(10, 20, 10);
+        this.scene.add(directionalLight);
+
+        // Texture loader
+        const textureLoader = new THREE.TextureLoader();
         
-        return shader;
+        // Load textures separately and ensure they're loaded before use
+        const ballTexture = textureLoader.load('assets/ball.jpg', (texture) => {
+            console.log('Ball texture loaded successfully');
+            this.ballMesh.material.map = texture;
+            this.ballMesh.material.needsUpdate = true;
+        });
+        
+        const wallTexture = textureLoader.load('assets/wall.jpg', (texture) => {
+            console.log('Wall texture loaded successfully');
+            texture.wrapS = THREE.RepeatWrapping;
+            texture.wrapT = THREE.RepeatWrapping;
+        });
+        
+        const floorTexture = textureLoader.load('assets/floor.jpg', (texture) => {
+            console.log('Floor texture loaded successfully');
+            texture.wrapS = THREE.RepeatWrapping;
+            texture.wrapT = THREE.RepeatWrapping;
+            texture.repeat.set(maze.width/2, maze.height/2);
+        });
+
+        // Create ball with its own unique material
+        const ballGeometry = new THREE.SphereGeometry(0.3, 32, 32);
+        const ballMaterial = new THREE.MeshPhongMaterial({
+            map: ballTexture,
+            specular: 0x555555,
+            shininess: 30
+        });
+        this.ballMesh = new THREE.Mesh(ballGeometry, ballMaterial);
+        this.scene.add(this.ballMesh);
+
+        // Create walls with separate material
+        this.wallMaterial = new THREE.MeshPhongMaterial({
+            map: wallTexture,
+            specular: 0x222222,
+            shininess: 10
+        });
+        this.createMazeWalls();
+
+        // Create floor
+        const floorGeometry = new THREE.PlaneGeometry(maze.width, maze.height);
+        const floorMaterial = new THREE.MeshPhongMaterial({
+            map: floorTexture,
+            side: THREE.DoubleSide
+        });
+        const floor = new THREE.Mesh(floorGeometry, floorMaterial);
+        floor.rotation.x = -Math.PI / 2;
+        floor.position.set(maze.width / 2, -0.5, maze.height / 2);
+        this.scene.add(floor);
+
+        // Set initial camera position
+        this.camera.position.set(maze.width / 2, 15, maze.height / 2);
+        this.camera.lookAt(maze.width / 2, 0, maze.height / 2);
     }
 
-    loadTextures() {
-        this.textures.floor = this.loadTexture('assets/floor.jpg');
-        this.textures.wall = this.loadTexture('assets/wall.jpg');
-        this.textures.ball = this.loadTexture('assets/ball.jpg');
-    }
-
-    loadTexture(url) {
-        const gl = this.gl;
-        const texture = gl.createTexture();
-        gl.bindTexture(gl.TEXTURE_2D, texture);
-        // Geçici 1x1 pixel
-        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([128,128,128,255]));
-        const image = new Image();
-        image.onload = function() {
-            gl.bindTexture(gl.TEXTURE_2D, texture);
-            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, image);
-            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
-            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT);
-            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT);
-            gl.generateMipmap(gl.TEXTURE_2D);
-        };
-        image.src = url;
-        return texture;
-    }
-
-    setupBuffers() {
-        const vertices = [];
-        const colors = [];
-        const normals = [];
-        const uvs = [];
-        const offsetX = -this.maze.width / 2;
-        const offsetY = -this.maze.height / 2;
-        const wallHeight = 1.0;
-        // 3B duvarlar (prizma)
-        for (let y = 0; y < this.maze.height; y++) {
-            for (let x = 0; x < this.maze.width; x++) {
-                if (this.maze.grid[y][x] === 1) {
-                    const x0 = x + offsetX;
-                    const y0 = y + offsetY;
-                    const x1 = x0 + 1;
-                    const y1 = y0 + 1;
-                    const z0 = 0;
-                    const z1 = wallHeight;
-                    // Her yüz için 2 üçgen ve normal ve UV
-                    // Ön yüz (z1)
-                    vertices.push(
-                        x0, y0, z1,  x1, y0, z1,  x1, y1, z1,
-                        x0, y0, z1,  x1, y1, z1,  x0, y1, z1
-                    );
-                    for (let i = 0; i < 6; i++) normals.push(0, 0, 1);
-                    uvs.push(0,0, 1,0, 1,1, 0,0, 1,1, 0,1);
-                    // Arka yüz (z0)
-                    vertices.push(
-                        x0, y1, z0,  x1, y1, z0,  x1, y0, z0,
-                        x0, y1, z0,  x1, y0, z0,  x0, y0, z0
-                    );
-                    for (let i = 0; i < 6; i++) normals.push(0, 0, -1);
-                    uvs.push(0,1, 1,1, 1,0, 0,1, 1,0, 0,0);
-                    // Sağ yüz
-                    vertices.push(
-                        x1, y0, z0,  x1, y1, z0,  x1, y1, z1,
-                        x1, y0, z0,  x1, y1, z1,  x1, y0, z1
-                    );
-                    for (let i = 0; i < 6; i++) normals.push(1, 0, 0);
-                    uvs.push(0,0, 1,0, 1,1, 0,0, 1,1, 0,1);
-                    // Sol yüz
-                    vertices.push(
-                        x0, y0, z1,  x0, y1, z1,  x0, y1, z0,
-                        x0, y0, z1,  x0, y1, z0,  x0, y0, z0
-                    );
-                    for (let i = 0; i < 6; i++) normals.push(-1, 0, 0);
-                    uvs.push(0,1, 1,1, 1,0, 0,1, 1,0, 0,0);
-                    // Üst yüz
-                    vertices.push(
-                        x0, y1, z1,  x1, y1, z1,  x1, y1, z0,
-                        x0, y1, z1,  x1, y1, z0,  x0, y1, z0
-                    );
-                    for (let i = 0; i < 6; i++) normals.push(0, 1, 0);
-                    uvs.push(0,1, 1,1, 1,0, 0,1, 1,0, 0,0);
-                    // Alt yüz
-                    vertices.push(
-                        x0, y0, z0,  x1, y0, z0,  x1, y0, z1,
-                        x0, y0, z0,  x1, y0, z1,  x0, y0, z1
-                    );
-                    for (let i = 0; i < 6; i++) normals.push(0, -1, 0);
-                    uvs.push(0,0, 1,0, 1,1, 0,0, 1,1, 0,1);
-                    for (let i = 0; i < 36; i++) {
-                        colors.push(0.7, 0.7, 0.7, 1.0);
-                    }
+    createMazeWalls() {
+        const wallGeometry = new THREE.BoxGeometry(1, 1, 1);
+        
+        for (let i = 0; i < this.maze.height; i++) {
+            for (let j = 0; j < this.maze.width; j++) {
+                if (this.maze.grid[i][j] === 1) {
+                    // Her duvar için materyal klonlanıyor
+                    const wall = new THREE.Mesh(wallGeometry, this.wallMaterial.clone());
+                    wall.position.set(j, 0.5, i);
+                    this.scene.add(wall);
                 }
             }
         }
-        // --- ZEMİN (PLANE) ---
-        this.floorStartIdx = vertices.length / 3;
-        // Plane: (zemin maze'nin altına tam oturacak şekilde)
-        const fx0 = offsetX, fy0 = offsetY, fx1 = offsetX + this.maze.width, fy1 = offsetY + this.maze.height, fz = 0;
-        vertices.push(
-            fx0, fy0, fz,
-            fx1, fy0, fz,
-            fx1, fy1, fz,
-            fx0, fy0, fz,
-            fx1, fy1, fz,
-            fx0, fy1, fz
-        );
-        for (let i = 0; i < 6; i++) normals.push(0, 0, 1);
-        uvs.push(0,0, 1,0, 1,1, 0,0, 1,1, 0,1);
-        for (let i = 0; i < 6; i++) colors.push(1,1,1,1);
-        this.floorVertexCount = 6;
-        // --- TOPU KÜRE OLARAK EKLE ---
-        const player = this.maze.ball.position;
-        const px = player.x + offsetX + 0.5;
-        const py = player.y + offsetY + 0.5;
-        const pz = 0.5;
-        const radius = 0.3;
-        const latitudeBands = 30;
-        const longitudeBands = 30;
-        const startIdx = vertices.length / 3;
-
-        // Küre için vertex'leri oluştur
-        for (let latNumber = 0; latNumber <= latitudeBands; latNumber++) {
-            const theta = latNumber * Math.PI / latitudeBands;
-            const sinTheta = Math.sin(theta);
-            const cosTheta = Math.cos(theta);
-
-            for (let longNumber = 0; longNumber <= longitudeBands; longNumber++) {
-                const phi = longNumber * 2 * Math.PI / longitudeBands;
-                const sinPhi = Math.sin(phi);
-                const cosPhi = Math.cos(phi);
-
-                const x = px + radius * cosPhi * sinTheta;
-                const y = py + radius * sinPhi * sinTheta;
-                const z = pz + radius * cosTheta;
-
-                // Normal vektörler (birim küre için pozisyon - merkez = normal)
-                const nx = cosPhi * sinTheta;
-                const ny = sinPhi * sinTheta;
-                const nz = cosTheta;
-
-                // Texture koordinatları
-                const u = 1 - (longNumber / longitudeBands);
-                const v = 1 - (latNumber / latitudeBands);
-
-                vertices.push(x, y, z);
-                normals.push(nx, ny, nz);
-                colors.push(1.0, 1.0, 1.0, 1.0);
-                uvs.push(u, v);
-            }
-        }
-
-        // Üçgenleri oluştur
-        for (let latNumber = 0; latNumber < latitudeBands; latNumber++) {
-            for (let longNumber = 0; longNumber < longitudeBands; longNumber++) {
-                const first = (latNumber * (longitudeBands + 1)) + longNumber + startIdx;
-                const second = first + longitudeBands + 1;
-
-                // İlk üçgen
-                vertices.push(
-                    vertices[first * 3], vertices[first * 3 + 1], vertices[first * 3 + 2],
-                    vertices[(first + 1) * 3], vertices[(first + 1) * 3 + 1], vertices[(first + 1) * 3 + 2],
-                    vertices[second * 3], vertices[second * 3 + 1], vertices[second * 3 + 2]
-                );
-
-                // İkinci üçgen
-                vertices.push(
-                    vertices[(first + 1) * 3], vertices[(first + 1) * 3 + 1], vertices[(first + 1) * 3 + 2],
-                    vertices[(second + 1) * 3], vertices[(second + 1) * 3 + 1], vertices[(second + 1) * 3 + 2],
-                    vertices[second * 3], vertices[second * 3 + 1], vertices[second * 3 + 2]
-                );
-
-                // Her vertex için normal, renk ve UV değerlerini ekle
-                for (let i = 0; i < 6; i++) {
-                    normals.push(
-                        normals[first * 3], normals[first * 3 + 1], normals[first * 3 + 2]
-                    );
-                    colors.push(1.0, 1.0, 1.0, 1.0);
-                }
-
-                // UV koordinatları
-                const u1 = 1 - (longNumber / longitudeBands);
-                const v1 = 1 - (latNumber / latitudeBands);
-                const u2 = 1 - ((longNumber + 1) / longitudeBands);
-                const v2 = 1 - ((latNumber + 1) / latitudeBands);
-
-                // İlk üçgen UV'leri
-                uvs.push(u1, v1);
-                uvs.push(u2, v1);
-                uvs.push(u1, v2);
-
-                // İkinci üçgen UV'leri
-                uvs.push(u2, v1);
-                uvs.push(u2, v2);
-                uvs.push(u1, v2);
-            }
-        }
-
-        this.playerStartIdx = startIdx;
-        this.playerVertexCount = (vertices.length / 3) - startIdx;
-        // ---
-        this.vertexBuffer = this.gl.createBuffer();
-        this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.vertexBuffer);
-        this.gl.bufferData(this.gl.ARRAY_BUFFER, new Float32Array(vertices), this.gl.STATIC_DRAW);
-        this.vertexBuffer.numItems = vertices.length / 3;
-        this.colorBuffer = this.gl.createBuffer();
-        this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.colorBuffer);
-        this.gl.bufferData(this.gl.ARRAY_BUFFER, new Float32Array(colors), this.gl.STATIC_DRAW);
-        this.normalBuffer = this.gl.createBuffer();
-        this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.normalBuffer);
-        this.gl.bufferData(this.gl.ARRAY_BUFFER, new Float32Array(normals), this.gl.STATIC_DRAW);
-        this.uvBuffer = this.gl.createBuffer();
-        this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.uvBuffer);
-        this.gl.bufferData(this.gl.ARRAY_BUFFER, new Float32Array(uvs), this.gl.STATIC_DRAW);
     }
-
+    
     render() {
-        this.gl.clearColor(0.0, 0.0, 0.0, 1.0);
-        this.gl.clear(this.gl.COLOR_BUFFER_BIT | this.gl.DEPTH_BUFFER_BIT);
-        this.gl.useProgram(this.shaderProgram);
-
-        const aspect = this.gl.canvas.width / this.gl.canvas.height;
-        const projectionMatrix = createPerspectiveMatrix(Math.PI / 4, aspect, 0.1, 100.0);
+        // Update ball position and rotation
+        const pos = this.maze.ball.position;
+        this.ballMesh.position.set(
+            pos.x,
+            0.3, // Height of ball from ground
+            pos.y
+        );
         
-        // Top için dönüş matrisini güncelle
-        this.maze.updateMovement();
+        // Update ball rotation
+        const rot = this.maze.ball.rotation;
+        this.ballMesh.rotation.set(
+            rot.x,
+            rot.y,
+            rot.z
+        );
         
-        const offsetX = -this.maze.width / 2;
-        const offsetY = -this.maze.height / 2;
-        const player = this.maze.ball.position;
-        const px = player.x + offsetX + 0.5;
-        const py = player.y + offsetY + 0.5;
-
-        // Kamera pozisyonunu topun üzerine yerleştir
-        const cameraHeight = 10; // Kamera yüksekliği
-        const eye = [px, py, cameraHeight]; // Kamera pozisyonu
-        const center = [px, py, 0]; // Bakış noktası (top)
-        const up = [0, 1, 0]; // Yukarı vektörü
-
-        const modelViewMatrix = createLookAtMatrix(eye, center, up);
-
-        // Shader'a matrisleri gönder
-        const uProjectionMatrix = this.gl.getUniformLocation(this.shaderProgram, 'uProjectionMatrix');
-        const uModelViewMatrix = this.gl.getUniformLocation(this.shaderProgram, 'uModelViewMatrix');
-        this.gl.uniformMatrix4fv(uProjectionMatrix, false, projectionMatrix);
-        this.gl.uniformMatrix4fv(uModelViewMatrix, false, modelViewMatrix);
-
-        // Attribute ayarları
-        const positionAttributeLocation = this.gl.getAttribLocation(this.shaderProgram, 'aVertexPosition');
-        if (positionAttributeLocation === -1) {
-            console.error('aVertexPosition attribute bulunamadı');
-            return;
-        }
-        this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.vertexBuffer);
-        this.gl.vertexAttribPointer(positionAttributeLocation, 3, this.gl.FLOAT, false, 0, 0);
-        this.gl.enableVertexAttribArray(positionAttributeLocation);
-
-        const colorAttributeLocation = this.gl.getAttribLocation(this.shaderProgram, 'aVertexColor');
-        if (colorAttributeLocation === -1) {
-            console.error('aVertexColor attribute bulunamadı');
-            return;
-        }
-        this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.colorBuffer);
-        this.gl.vertexAttribPointer(colorAttributeLocation, 4, this.gl.FLOAT, false, 0, 0);
-        this.gl.enableVertexAttribArray(colorAttributeLocation);
-
-        const normalAttributeLocation = this.gl.getAttribLocation(this.shaderProgram, 'aVertexNormal');
-        if (normalAttributeLocation !== -1) {
-            this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.normalBuffer);
-            this.gl.vertexAttribPointer(normalAttributeLocation, 3, this.gl.FLOAT, false, 0, 0);
-            this.gl.enableVertexAttribArray(normalAttributeLocation);
-        }
-
-        const texCoordAttributeLocation = this.gl.getAttribLocation(this.shaderProgram, 'aTexCoord');
-        if (texCoordAttributeLocation !== -1) {
-            this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.uvBuffer);
-            this.gl.vertexAttribPointer(texCoordAttributeLocation, 2, this.gl.FLOAT, false, 0, 0);
-            this.gl.enableVertexAttribArray(texCoordAttributeLocation);
-        }
-
-        // --- ZEMİNİ ÇİZ ---
-        this.gl.activeTexture(this.gl.TEXTURE0);
-        this.gl.bindTexture(this.gl.TEXTURE_2D, this.textures.floor);
-        this.gl.uniform1i(this.gl.getUniformLocation(this.shaderProgram, 'uTexture'), 0);
-        this.gl.drawArrays(this.gl.TRIANGLES, this.floorStartIdx, this.floorVertexCount);
-
-        // --- DUVARLARI ÇİZ ---
-        this.gl.activeTexture(this.gl.TEXTURE0);
-        this.gl.bindTexture(this.gl.TEXTURE_2D, this.textures.wall);
-        this.gl.uniform1i(this.gl.getUniformLocation(this.shaderProgram, 'uTexture'), 0);
-        this.gl.drawArrays(this.gl.TRIANGLES, 0, this.floorStartIdx);
-
-        // --- TOPU ÇİZ ---
-        // Top için dönüş matrisini uygula
-        const ballModelViewMatrix = new Float32Array(16);
-        for (let i = 0; i < 16; i++) {
-            ballModelViewMatrix[i] = modelViewMatrix[i];
-        }
+        // Update camera position
+        const targetX = this.maze.camera.position.x;
+        const targetZ = this.maze.camera.position.y;
+        const targetY = this.maze.camera.height;
         
-        // Dönüş matrislerini uygula
-        const rotateX = this.maze.ball.rotation.x;
-        const rotateY = this.maze.ball.rotation.y;
-        const rotateZ = this.maze.ball.rotation.z;
+        this.camera.position.set(targetX, targetY, targetZ);
+        this.camera.lookAt(new THREE.Vector3(targetX, 0, targetZ));
         
-        // X ekseni etrafında dönüş
-        const cosX = Math.cos(rotateX);
-        const sinX = Math.sin(rotateX);
-        const rotationX = new Float32Array([
-            1, 0, 0, 0,
-            0, cosX, -sinX, 0,
-            0, sinX, cosX, 0,
-            0, 0, 0, 1
-        ]);
-        
-        // Y ekseni etrafında dönüş
-        const cosY = Math.cos(rotateY);
-        const sinY = Math.sin(rotateY);
-        const rotationY = new Float32Array([
-            cosY, 0, sinY, 0,
-            0, 1, 0, 0,
-            -sinY, 0, cosY, 0,
-            0, 0, 0, 1
-        ]);
-        
-        // Z ekseni etrafında dönüş
-        const cosZ = Math.cos(rotateZ);
-        const sinZ = Math.sin(rotateZ);
-        const rotationZ = new Float32Array([
-            cosZ, -sinZ, 0, 0,
-            sinZ, cosZ, 0, 0,
-            0, 0, 1, 0,
-            0, 0, 0, 1
-        ]);
-
-        // Dönüş matrislerini uygula
-        this.gl.uniformMatrix4fv(uModelViewMatrix, false, ballModelViewMatrix);
-        
-        this.gl.activeTexture(this.gl.TEXTURE0);
-        this.gl.bindTexture(this.gl.TEXTURE_2D, this.textures.ball);
-        this.gl.uniform1i(this.gl.getUniformLocation(this.shaderProgram, 'uTexture'), 0);
-        this.gl.drawArrays(this.gl.TRIANGLES, this.playerStartIdx, this.playerVertexCount);
-        
-        // Buffer'ları her frame güncelle (top pozisyonu için)
-        this.setupBuffers();
+        // Render scene
+        this.renderer.render(this.scene, this.camera);
+    }
+    
+    // Handle window resize
+    onWindowResize() {
+        this.camera.aspect = window.innerWidth / window.innerHeight;
+        this.camera.updateProjectionMatrix();
+        this.renderer.setSize(window.innerWidth, window.innerHeight);
     }
 }
 
@@ -874,3 +567,10 @@ class Game {
 window.onload = () => {
     new Game();
 };
+
+// Add window resize event listener
+window.addEventListener('resize', () => {
+    if (game && game.renderer) {
+        game.renderer.onWindowResize();
+    }
+});
