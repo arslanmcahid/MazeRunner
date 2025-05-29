@@ -115,18 +115,18 @@ class Maze {
         this.world = new b2World(new b2Vec2(0, 0), true);
         console.log('Box2D world created');
         
-        // Create ball body
+        // Create ball body with larger radius
         const bodyDef = new b2BodyDef();
         bodyDef.type = b2Body.b2_dynamicBody;
         bodyDef.position.Set(1, 1);
-        bodyDef.linearDamping = 1.0; // Added linear damping to reduce maximum speed
+        bodyDef.linearDamping = 1.0;
         this.ballBody = this.world.CreateBody(bodyDef);
         
         const fixDef = new b2FixtureDef();
         fixDef.density = 1.0;
-        fixDef.friction = 0.5; // Increased friction from 0.3 to 0.5
-        fixDef.restitution = 0.2; // Reduced restitution for less bouncy behavior
-        fixDef.shape = new b2CircleShape(0.3);
+        fixDef.friction = 0.5;
+        fixDef.restitution = 0.2;
+        fixDef.shape = new b2CircleShape(0.4); // Increased from 0.3 to 0.4
         this.ballBody.CreateFixture(fixDef);
 
         // Create maze walls
@@ -147,14 +147,14 @@ class Maze {
         this.ball = {
             position: { x: 1, y: 1 },
             rotation: { x: 0, y: 0, z: 0 },
-            radius: 0.3,
+            radius: 0.4, // Increased from 0.3 to 0.4
             rotationSpeed: Math.PI * 2
         };
 
         this.camera = {
             position: { x: 1, y: 1 },
-            height: 10,
-            targetHeight: 10,
+            height: 5, // Decreased from 10 to 5 for closer view
+            targetHeight: 5, // Decreased from 10 to 5
             lerpFactor: 0.05,
             heightLerpFactor: 0.02
         };
@@ -165,11 +165,14 @@ class Maze {
 
     startMove(dx, dy) {
         // Apply force to the ball instead of direct position change
-        console.log('startMove called with:', dx, dy);
-        const force = new b2Vec2(dx * 1.0, dy * 1.0); // Reduced force magnitude from 2 to 1
+        const force = new b2Vec2(dx * 5.0, dy * 5.0); // Arttırılmış kuvvet
         this.ballBody.ApplyForce(force, this.ballBody.GetWorldCenter());
         this.moveDirection = { x: dx, y: dy };
-        console.log('Ball position after force:', this.ballBody.GetPosition().x, this.ballBody.GetPosition().y);
+        
+        // Hareket durumunu güncelle
+        const pos = this.ballBody.GetPosition();
+        this.ball.position.x = pos.x;
+        this.ball.position.y = pos.y;
     }
 
     updateMovement() {
@@ -190,7 +193,7 @@ class Maze {
         const moveDistance = Math.sqrt(vel.x * vel.x + vel.y * vel.y);
         
         // Apply maximum speed limit
-        const maxSpeed = 3.0;
+        const maxSpeed = 5.0; // Arttırılmış maksimum hız
         if (moveDistance > maxSpeed) {
             vel.Multiply(maxSpeed / moveDistance);
             this.ballBody.SetLinearVelocity(vel);
@@ -214,12 +217,12 @@ class Maze {
         this.camera.position.x += (targetX - this.camera.position.x) * this.camera.lerpFactor;
         this.camera.position.y += (targetY - this.camera.position.y) * this.camera.lerpFactor;
         
-        // Dynamic camera height based on ball speed
-        const targetHeight = 10 + moveDistance * 1.5;
+        // Dynamic camera height based on ball speed with lower base height
+        const targetHeight = 5 + moveDistance * 1.0; // Adjusted from 10 + moveDistance * 1.5
         this.camera.height += (targetHeight - this.camera.height) * this.camera.heightLerpFactor;
 
-        // Apply friction to ball
-        vel.Multiply(0.90);
+        // Apply less friction to ball
+        vel.Multiply(0.95); // Azaltılmış sürtünme
         this.ballBody.SetLinearVelocity(vel);
     }
 
@@ -294,8 +297,8 @@ class Renderer {
             texture.repeat.set(maze.width/2, maze.height/2);
         });
 
-        // Create ball with its own unique material
-        const ballGeometry = new THREE.SphereGeometry(0.3, 32, 32);
+        // Create ball with larger radius
+        const ballGeometry = new THREE.SphereGeometry(0.4, 32, 32); // Increased from 0.3 to 0.4
         const ballMaterial = new THREE.MeshPhongMaterial({
             map: ballTexture,
             specular: 0x555555,
@@ -323,8 +326,8 @@ class Renderer {
         floor.position.set(maze.width / 2, -0.5, maze.height / 2);
         this.scene.add(floor);
 
-        // Set initial camera position
-        this.camera.position.set(maze.width / 2, 15, maze.height / 2);
+        // Set initial camera position closer to ball
+        this.camera.position.set(maze.width / 2, 7, maze.height / 2); // Decreased height from 15 to 7
         this.camera.lookAt(maze.width / 2, 0, maze.height / 2);
     }
 
@@ -348,7 +351,7 @@ class Renderer {
         const pos = this.maze.ball.position;
         this.ballMesh.position.set(
             pos.x,
-            0.3, // Height of ball from ground
+            0.4, // Increased height from 0.3 to 0.4
             pos.y
         );
         
@@ -538,10 +541,10 @@ class Game {
 
         // Dikey hareket
         if (this.pressedKeys.has('w') || this.pressedKeys.has('arrowup')) {
-            dy += 1;
+            dy -= 1;  // Değiştirildi: Yukarı hareket için negatif y
         }
         if (this.pressedKeys.has('s') || this.pressedKeys.has('arrowdown')) {
-            dy -= 1;
+            dy += 1;  // Değiştirildi: Aşağı hareket için pozitif y
         }
 
         // Çapraz hareket için normalize etme
@@ -555,9 +558,13 @@ class Game {
         if (dx !== 0 || dy !== 0) {
             this.maze.startMove(dx, dy);
         }
+
+        // Fizik ve görüntü güncellemesi
+        this.maze.updateMovement();
     }
 
     animate() {
+        this.updateMovement();  // Her frame'de hareketi güncelle
         this.renderer.render();
         this.updateFpsCounter();
         requestAnimationFrame(() => this.animate());
