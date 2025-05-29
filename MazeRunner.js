@@ -115,16 +115,16 @@ class Maze {
         this.world = new b2World(new b2Vec2(0, 0), true);
         console.log('Box2D world created');
         
-        // Create ball body with larger radius - ASTRAY PHYSICS
+        // Create ball body with larger radius
         const bodyDef = new b2BodyDef();
         bodyDef.type = b2Body.b2_dynamicBody;
         bodyDef.position.Set(1, 1);
-        // bodyDef.linearDamping = 0.5;  // Remove linear damping for Astray physics
+        // bodyDef.linearDamping = 0.5;  // Remove linear damping for physics
         this.ballBody = this.world.CreateBody(bodyDef);
         
         const fixDef = new b2FixtureDef();
         fixDef.density = 1.0;
-        fixDef.friction = 0.0;  // ASTRAY: No friction
+        fixDef.friction = 0.0;  // No friction
         fixDef.restitution = 0.02;  // MINIMAL BOUNCE: Almost no bounce - was 0.1, now 0.02
         fixDef.shape = new b2CircleShape(0.25);  // SMALLER: Reduced from 0.35 to 0.25
         this.ballBody.CreateFixture(fixDef);
@@ -156,30 +156,30 @@ class Maze {
         this.camera = {
             position: { x: 1, y: 1 },
             height: 5,
-            lerpFactor: 0.1  // ASTRAY: Faster camera follow (0.1 vs 0.05)
+            lerpFactor: 0.1  // Faster camera follow (0.1 vs 0.05)
         };
 
         this.lastTime = performance.now();
-        // ASTRAY MOVEMENT SYSTEM
-        this.keyAxis = [0, 0];  // Astray uses keyAxis array instead of moveDirection
+        // Movement system
+        this.keyAxis = [0, 0];  // Uses keyAxis array instead of moveDirection
         this.collectibles = [];
         this.score = 0;
         this.gameCompleted = false;  // Victory flag
         this.createCollectibles();
     }
 
-    // ASTRAY MOVEMENT METHODS - Replace old movement system
+    // Movement methods - Replace old movement system
     setMovement(x, y) {
         this.keyAxis = [x, y];
     }
 
     updateMovement() {
-        // ASTRAY PHYSICS - Apply "friction" (reduced for more speed)
+        // Physics - Apply "friction" (reduced for more speed)
         const lv = this.ballBody.GetLinearVelocity();
         lv.Multiply(0.99);  // Further reduced friction: 0.99 instead of 0.98 for even more speed
         this.ballBody.SetLinearVelocity(lv);
         
-        // ASTRAY PHYSICS - Apply user-directed force (increased for faster acceleration)
+        // Physics - Apply user-directed force (increased for faster acceleration)
         const f = new b2Vec2(
             this.keyAxis[0] * this.ballBody.GetMass() * 1.2,  // Increased from 0.75 to 1.2 (60% faster acceleration)
             this.keyAxis[1] * this.ballBody.GetMass() * 1.2   // Increased from 0.75 to 1.2 (60% faster acceleration)
@@ -201,11 +201,11 @@ class Maze {
         this.ball.position.x = pos.x;
         this.ball.position.y = pos.y;
 
-        // ASTRAY BALL ROTATION - Update ball rotation based on movement
+        // Ball rotation - Update ball rotation based on movement
         this.ball.rotation.x += stepY / this.ball.radius * 2;  // Multiply by 2 for more visible rotation
         this.ball.rotation.z -= stepX / this.ball.radius * 2;  // Multiply by 2 for more visible rotation
 
-        // ASTRAY CAMERA - Update camera position smoothly
+        // Camera - Update camera position smoothly
         this.camera.position.x += (this.ball.position.x - this.camera.position.x) * this.camera.lerpFactor;
         this.camera.position.y += (this.ball.position.y - this.camera.position.y) * this.camera.lerpFactor;
 
@@ -629,7 +629,7 @@ class Game {
         this.lastFpsUpdate = performance.now();
         this.currentFps = 0;
         
-        // ASTRAY: Initialize keys object for keyboard handling
+        // Initialize keys object for keyboard handling
         this.keys = {};
         
         // CAMERA SYSTEM: Overview -> Following transition
@@ -712,7 +712,7 @@ class Game {
                     <li>⬇️ S or Down Arrow: Move Backward</li>
                     <li>⬅️ A or Left Arrow: Move Left</li>
                     <li>➡️ D or Right Arrow: Move Right</li>
-                    <li>🎮 H, J, K, L: Vim-style movement (Astray compatible)</li>
+                    <li>🎮 H, J, K, L: Vim-style movement controls</li>
                 </ul>
                 <p><strong>Additional Controls:</strong></p>
                 <ul style="list-style-type: none; padding-left: 20px;">
@@ -725,7 +725,7 @@ class Game {
                     <li>🔄 Smooth transition: 2-second smooth camera movement</li>
                 </ul>
                 <p><strong>Objective:</strong></p>
-                <p style="padding-left: 20px;">Navigate through the maze and collect emerald gems to increase your score! Uses Astray-style physics for realistic ball movement.</p>
+                <p style="padding-left: 20px;">Navigate through the maze and collect emerald gems to increase your score! Features realistic ball physics for smooth movement.</p>
                 <p style="text-align: center; margin-top: 20px; color: #888;">
                     Press 'I' again to close this window
                 </p>
@@ -744,7 +744,7 @@ class Game {
     }
 
     setupEventListeners() {
-        // ASTRAY STYLE KEYBOARD HANDLING
+        // Keyboard handling
         document.addEventListener('keydown', (e) => {
             const key = e.key.toLowerCase();
             
@@ -775,7 +775,7 @@ class Game {
         });
     }
 
-    // ASTRAY STYLE KEY AXIS UPDATE
+    // Key axis update
     updateKeyAxis() {
         let x = 0, y = 0;
         
