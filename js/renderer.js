@@ -1,136 +1,251 @@
-class Renderer {
+import * as THREE from 'https://unpkg.com/three@0.128.0/build/three.module.js';
+
+export class Renderer {
     constructor(gl, maze) {
-        this.gl = gl;
         this.maze = maze;
-        this.setupShaders();
-        this.setupBuffers();
-    }
+        
+        // Three.js setup
+        this.scene = new THREE.Scene();
+        this.camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
 
-    setupShaders() {
-        // Vertex shader
-        const vsSource = `
-            attribute vec3 aVertexPosition;
-            attribute vec4 aVertexColor;
-            varying vec4 vColor;
-            
-            void main(void) {
-                gl_Position = vec4(aVertexPosition, 1.0);
-                vColor = aVertexColor;
-            }
-        `;
+        this.scene.add(this.camera); // add camera to scene for add the light as a child of the camera i think
+        
+        this.renderer = new THREE.WebGLRenderer({ canvas: document.getElementById('glCanvas'), antialias: true });
+        this.renderer.setSize(window.innerWidth, window.innerHeight);
 
-        // Fragment shader
-        const fsSource = `
-            precision mediump float;
-            varying vec4 vColor;
-            
-            void main(void) {
-                gl_FragColor = vColor;
-            }
-        `;
+        // Fade in the ambient light & camera-spot settings
+        this.startAmbientIntensity = 0.6;
+        this.endAmbientIntensity = 0.0;
+        this.ambientLight = new THREE.AmbientLight(0xffffff, this.startAmbientIntensity);
+        this.scene.add(this.ambientLight);
 
-        // Shader programını oluştur
-        const vertexShader = this.loadShader(this.gl.VERTEX_SHADER, vsSource);
-        const fragmentShader = this.loadShader(this.gl.FRAGMENT_SHADER, fsSource);
-        
-        if (!vertexShader || !fragmentShader) {
-            return;
-        }
-        
-        this.shaderProgram = this.gl.createProgram();
-        this.gl.attachShader(this.shaderProgram, vertexShader);
-        this.gl.attachShader(this.shaderProgram, fragmentShader);
-        this.gl.linkProgram(this.shaderProgram);
+        this.cameraLight = new THREE.PointLight(
+            0xffffff, //color
+            2, //intensity
+            10, //distance
+            1); //decay
+        this.camera.add(this.cameraLight);
 
-        if (!this.gl.getProgramParameter(this.shaderProgram, this.gl.LINK_STATUS)) {
-            alert('Shader programı oluşturulamadı: ' + this.gl.getProgramInfoLog(this.shaderProgram));
-            return;
-        }
-    }
+        // Texture loader
+        const textureLoader = new THREE.TextureLoader();
+        
+        // Load textures separately and ensure they're loaded before use
+        const ballTexture = textureLoader.load('assets/ball.jpg', (texture) => {
+            console.log('Ball texture loaded successfully');
+            this.ballMesh.material.map = texture;
+            this.ballMesh.material.needsUpdate = true;
+        });
+        
+        const wallTexture = textureLoader.load('assets/wall.jpg', (texture) => {
+            console.log('Wall texture loaded successfully');
+            texture.wrapS = THREE.RepeatWrapping;
+            texture.wrapT = THREE.RepeatWrapping;
+        });
+        
+        const floorTexture = textureLoader.load('assets/floor.jpg', (texture) => {
+            console.log('Floor texture loaded successfully');
+            texture.wrapS = THREE.RepeatWrapping;
+            texture.wrapT = THREE.RepeatWrapping;
+            texture.repeat.set(maze.width/2, maze.height/2);
+        });
 
-    loadShader(type, source) {
-        const shader = this.gl.createShader(type);
-        this.gl.shaderSource(shader, source);
-        this.gl.compileShader(shader);
-        
-        if (!this.gl.getShaderParameter(shader, this.gl.COMPILE_STATUS)) {
-            alert('Shader derleme hatası: ' + this.gl.getShaderInfoLog(shader));
-            this.gl.deleteShader(shader);
-            return null;
-        }
-        
-        return shader;
-    }
+        // Create ball with smaller radius (0.25)
+        const ballGeometry = new THREE.SphereGeometry(0.25, 32, 32);
+        const ballMaterial = new THREE.MeshPhongMaterial({
+            map: ballTexture,
+            specular: 0x555555,
+            shininess: 30
+        });
+        this.ballMesh = new THREE.Mesh(ballGeometry, ballMaterial);
+        this.scene.add(this.ballMesh);
 
-    setupBuffers() {
-        // Labirent duvarları için vertex buffer
-        const vertices = [];
-        const colors = [];
-        
-        // Labirent duvarlarını oluştur
-        for (let y = 0; y < this.maze.height; y++) {
-            for (let x = 0; x < this.maze.width; x++) {
-                if (this.maze.grid[y][x] === 1) {
-                    // Duvar için kare oluştur
-                    const wallVertices = [
-                        x, y, 0,
-                        x+1, y, 0,
-                        x+1, y+1, 0,
-                        x, y+1, 0
-                    ];
-                    
-                    vertices.push(...wallVertices);
-                    
-                    // Duvar rengi (koyu gri)
-                    const wallColor = [0.3, 0.3, 0.3, 1.0];
-                    colors.push(...wallColor, ...wallColor, ...wallColor, ...wallColor);
-                }
-            }
-        }
-        
-        // Vertex buffer
-        this.vertexBuffer = this.gl.createBuffer();
-        this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.vertexBuffer);
-        this.gl.bufferData(this.gl.ARRAY_BUFFER, new Float32Array(vertices), this.gl.STATIC_DRAW);
-        this.vertexBuffer.numItems = vertices.length / 3; // Vertex sayısını kaydet
-        
-        // Color buffer
-        this.colorBuffer = this.gl.createBuffer();
-        this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.colorBuffer);
-        this.gl.bufferData(this.gl.ARRAY_BUFFER, new Float32Array(colors), this.gl.STATIC_DRAW);
+        // Create walls with separate material
+        this.wallMaterial = new THREE.MeshPhongMaterial({
+            map: wallTexture,
+            specular: 0x222222,
+            shininess: 10
+        });
+        this.createMazeWalls();
+
+        // Create floor
+        const floorGeometry = new THREE.PlaneGeometry(maze.width, maze.height);
+        const floorMaterial = new THREE.MeshPhongMaterial({
+            map: floorTexture,
+            side: THREE.DoubleSide
+        });
+        const floor = new THREE.Mesh(floorGeometry, floorMaterial);
+        floor.rotation.x = -Math.PI / 2;
+        floor.position.set(maze.width / 2, -0.5, maze.height / 2);
+        this.scene.add(floor);
+
+        // Set initial camera position for overview
+        const mazeSize = Math.max(maze.width, maze.height);
+        this.overviewHeight = mazeSize * 1.2;  // Height to see full maze
+        this.camera.position.set(maze.width / 2, this.overviewHeight, maze.height / 2);
+        this.camera.lookAt(maze.width / 2, 0, maze.height / 2);
+
+        // Load emerald texture
+        const emeraldTexture = textureLoader.load('assets/emerald.png', (texture) => {
+            console.log('Emerald texture loaded successfully');
+            texture.wrapS = THREE.RepeatWrapping;
+            texture.wrapT = THREE.RepeatWrapping;
+        });
+
+        // Create collectibles
+        this.collectibleMeshes = [];
+        this.createCollectibles(maze.collectibles);
     }
 
     render() {
-        this.gl.clearColor(0.0, 0.0, 0.0, 1.0);
-        this.gl.clear(this.gl.COLOR_BUFFER_BIT | this.gl.DEPTH_BUFFER_BIT);
+        // Update ball position and rotation
+        const pos = this.maze.ball.position;
+        this.ballMesh.position.set(
+            pos.x,
+            0.25,  // Smaller ball height (radius)
+            pos.y
+        );
         
-        // Shader programını kullan
-        this.gl.useProgram(this.shaderProgram);
+        // Update ball rotation
+        const rot = this.maze.ball.rotation;
+        this.ballMesh.rotation.set(
+            rot.x,
+            rot.y,
+            rot.z
+        );
         
-        // Vertex pozisyonlarını ayarla
-        const positionAttributeLocation = this.gl.getAttribLocation(this.shaderProgram, 'aVertexPosition');
-        if (positionAttributeLocation === -1) {
-            console.error('aVertexPosition attribute bulunamadı');
-            return;
-        }
+        // Update camera position based on game state
+        this.updateCameraPosition();
+
+        // Update collectibles rotation and visibility
+        this.collectibleMeshes.forEach((mesh, index) => {
+            const collectible = this.maze.collectibles[index];
+            if (collectible.collected) {
+                if (mesh.visible) {
+                    mesh.visible = false;
+                }
+            } else {
+                // Zümrütleri daha yavaş döndür ve yukarı aşağı hareket ettir
+                mesh.rotation.y = collectible.rotationY;
+                // Yukarı aşağı sallanma hareketi ekle
+                mesh.position.y = 1.0 + Math.sin(Date.now() * 0.002) * 0.1;
+            }
+        });
         
-        this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.vertexBuffer);
-        this.gl.vertexAttribPointer(positionAttributeLocation, 3, this.gl.FLOAT, false, 0, 0);
-        this.gl.enableVertexAttribArray(positionAttributeLocation);
-        
-        // Renkleri ayarla
-        const colorAttributeLocation = this.gl.getAttribLocation(this.shaderProgram, 'aVertexColor');
-        if (colorAttributeLocation === -1) {
-            console.error('aVertexColor attribute bulunamadı');
-            return;
-        }
-        
-        this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.colorBuffer);
-        this.gl.vertexAttribPointer(colorAttributeLocation, 4, this.gl.FLOAT, false, 0, 0);
-        this.gl.enableVertexAttribArray(colorAttributeLocation);
-        
-        // Çizim
-        const vertexCount = this.vertexBuffer.numItems || 4;
-        this.gl.drawArrays(this.gl.TRIANGLE_FAN, 0, vertexCount);
+        // Render scene
+        this.renderer.render(this.scene, this.camera);
     }
-} 
+    
+    // Handle window resize
+    onWindowResize() {
+        this.camera.aspect = window.innerWidth / window.innerHeight;
+        this.camera.updateProjectionMatrix();
+        this.renderer.setSize(window.innerWidth, window.innerHeight);
+    }
+
+    createMazeWalls() {
+        const wallGeometry = new THREE.BoxGeometry(1, 1, 1);
+        
+        for (let i = 0; i < this.maze.height; i++) {
+            for (let j = 0; j < this.maze.width; j++) {
+                if (this.maze.grid[i][j] === 1) {
+                    const wall = new THREE.Mesh(wallGeometry, this.wallMaterial.clone());
+                    wall.position.set(j, 0.5, i);
+                    this.scene.add(wall);
+                }
+            }
+        }
+    }
+
+    createCollectibles(collectibles) {
+        // Zümrüt geometrisi (oktahedron şeklinde)
+        const emeraldGeometry = new THREE.OctahedronGeometry(0.2, 0);
+        const emeraldMaterial = new THREE.MeshPhongMaterial({
+            color: 0x50C878, // Zümrüt yeşili
+            emissive: 0x208040,
+            emissiveIntensity: 0.2,
+            shininess: 100,
+            specular: 0xFFFFFF,
+            transparent: true,
+            opacity: 0.9
+        });
+
+        collectibles.forEach(collectible => {
+            const mesh = new THREE.Mesh(emeraldGeometry, emeraldMaterial.clone());
+            // Zümrütleri yerden biraz yukarıda konumlandır
+            mesh.position.set(collectible.x, 1.0, collectible.y);
+            this.scene.add(mesh);
+            this.collectibleMeshes.push(mesh);
+        });
+    }
+
+    updateCameraPosition() {
+        // Get camera state from game
+        const game = window.gameInstance;
+
+        const t = (game.cameraState === 'overview') 
+                    ? 0 
+                    : game.cameraTransition;
+                    this.ambientLight.intensity = THREE.MathUtils.lerp(
+                        this.startAmbientIntensity,
+                        this.endAmbientIntensity,
+                        t
+                    );
+
+
+        if (!game) {
+            // Fallback to normal following if no game instance
+            const targetX = this.maze.camera.position.x;
+            const targetZ = this.maze.camera.position.y;
+            const targetY = this.maze.camera.height;
+            
+            this.camera.position.set(targetX, targetY, targetZ);
+            this.camera.lookAt(new THREE.Vector3(targetX, 0, targetZ));
+            return;
+        }
+
+        if (game.cameraState === 'overview') {
+            // Overview mode: Show entire maze from above
+            const targetX = this.maze.width / 2;
+            const targetZ = this.maze.height / 2;
+            const targetY = this.overviewHeight;
+            
+            this.camera.position.set(targetX, targetY, targetZ);
+            this.camera.lookAt(new THREE.Vector3(targetX, 0, targetZ));
+            
+        } else if (game.cameraState === 'transition') {
+            // Transition mode: Smooth interpolation
+            const t = game.cameraTransition; // 0-1 easing
+            
+            // Overview position
+            const overviewX = this.maze.width / 2;
+            const overviewY = this.overviewHeight;
+            const overviewZ = this.maze.height / 2;
+            
+            // Following position
+            const followingX = this.maze.camera.position.x;
+            const followingY = this.maze.camera.height;
+            const followingZ = this.maze.camera.position.y;
+            
+            // Smooth easing function
+            const easeInOut = t => t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
+            const easedT = easeInOut(t);
+            
+            // Interpolate positions
+            const currentX = overviewX + (followingX - overviewX) * easedT;
+            const currentY = overviewY + (followingY - overviewY) * easedT;
+            const currentZ = overviewZ + (followingZ - overviewZ) * easedT;
+            
+            this.camera.position.set(currentX, currentY, currentZ);
+            this.camera.lookAt(new THREE.Vector3(followingX, 0, followingZ));
+            
+        } else {
+            // Following mode: Normal ball following
+            const targetX = this.maze.camera.position.x;
+            const targetZ = this.maze.camera.position.y;
+            const targetY = this.maze.camera.height;
+            
+            this.camera.position.set(targetX, targetY, targetZ);
+            this.camera.lookAt(new THREE.Vector3(targetX, 0, targetZ));
+        }
+    }
+}
